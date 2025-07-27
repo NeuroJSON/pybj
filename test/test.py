@@ -1,4 +1,4 @@
-# Copyright (c) 2020-2023 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
+# Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
 # Copyright (c) 2016-2019 Iotic Labs Ltd. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -960,15 +960,15 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
         setrecursionlimit(200)
         try:
             obj = current = []
-            for _ in range(getrecursionlimit() * 2):
+            # Increase the multiplier for Python 3.12+
+            multiplier = 4 if version_info >= (3, 12) else 2
+            for _ in range(getrecursionlimit() * multiplier):
                 new_list = []
                 current.append(new_list)
                 current = new_list
-
             with self.assert_raises_regex(RuntimeError, "recursion"):
                 self.bjddumpb(obj)
-
-            raw = ARRAY_START * (getrecursionlimit() * 2)
+            raw = ARRAY_START * (getrecursionlimit() * multiplier)
             with self.assert_raises_regex(RuntimeError, "recursion"):
                 self.bjdloadb(raw)
         finally:

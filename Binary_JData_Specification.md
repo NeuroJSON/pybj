@@ -1,19 +1,22 @@
 Binary JData: A portable interchange format for complex binary data
 ============================================================
 
-- **Status of this document**: Request for comments
 - **Maintainer**: Qianqian Fang <q.fang at neu.edu>
 - **License**: Apache License, Version 2.0
-- **Version**: 1 (Draft 2)
-- **Last Stable Release**: [Version 1 (Draft 2)](https://github.com/NeuroJSON/bjdata/blob/Draft_2/Binary_JData_Specification.md)
+- **Version**: 1 (Draft 3)
+- **URL**: https://neurojson.org/bjdata/draft3
+- **Status**: Frozen on March 23, 2025. For future updates, please see the Development URL below
+- **Development**: https://github.com/NeuroJSON/bjdata
+- **Acknowledgement**: This project is supported by US National Institute of Health (NIH)
+  grant [U24-NS124027 (NeuroJSON)](https://neurojson.org)
 - **Abstract**:
 
 > The Binary JData (BJData) Specification defines an efficient serialization 
 protocol for unambiguously storing complex and strongly-typed binary data found 
 in diverse applications. The BJData specification is the binary counterpart
 to the JSON format, both of which are used to serialize complex data structures
-supported by the JData specification (http://openjdata.org). The BJData spec is 
-derived and extended from the Universal Binary JSON (UBJSON, http://ubjson.org) 
+supported by the JData specification (https://neurojson.org/jdata). The BJData spec is 
+derived and extended from the Universal Binary JSON (UBJSON, https://ubjson.org) 
 specification (Draft 12). It adds supports for N-dimensional packed arrays and 
 extended binary data types.
 
@@ -45,31 +48,32 @@ backends, medical imaging, and scientific data storage.
 The lack of support for strongly-typed and binary data has been one of the main 
 barriers towards widespread adoption of JSON in these domains. In recent years, 
 efforts to address these limitation have resulted in an array of versatile binary 
-JSON formats, such as BSON (Binary JSON, http://bson.org), UBJSON (Universal Binary 
-JSON, http://ubjson.org), MessagePack (https://msgpack.org), CBOR (Concise Binary 
+JSON formats, such as BSON (Binary JSON, https://bson.org), UBJSON (Universal Binary 
+JSON, https://ubjson.org), MessagePack (https://msgpack.org), CBOR (Concise Binary 
 Object Representation, [RFC 7049], https://cbor.io) etc. These binary JSON 
 counterparts are broadly used in speed-sensitive data processing applications and
 address various needs from a diverse range of applications.
  
 To better champion findable, accessible, interoperable, and reusable 
 ([FAIR principle](https://www.nature.com/articles/sdata201618)) data in 
-scientific data storage and management, we have created the **OpenJData Initiative**
-(http://openjdata.org) to develop a set of open-standards for portable, human-readable 
+scientific data storage and management, we have created the **NeuroJSON Project**
+(https://neurojson.org) to develop a set of open-standards for portable, human-readable 
 and high-performance data annotation and serialization aimed towards enabling
-scientific researchers, IT engineers, as well as general data users to efficiently 
-annotate and store complex data structures arising from diverse applications.
+neuroimaging researchers, scientific researchers, IT engineers, as well as general 
+data users to efficiently annotate and store complex data structures arising 
+from diverse applications.
  
-The OpenJData framework first converts complex data structures, such as N-D
+The NeuroJSON data sharing framework first converts complex data structures, such as N-D
 arrays, trees, tables and graphs, into easy-to-serialize, portable data annotations
 via the **JData Specification** (https://github.com/NeuroJSON/jdata) and then serializes 
 and stores the annotated JData constructs using widely-supported data formats. 
-To balance data portability, readability and efficiency, OpenJData defines a 
+To balance data portability, readability and efficiency, NeuroJSON defines a 
 **dual-interface**: a text-based format **syntactically compatible with JSON**,
 and a binary-JSON format to achieve significantly smaller file sizes and faster 
 encoding/decoding.
  
 The Binary JData (BJData) format is the **official binary interface** for the JData 
-specification. It is derived from the widely supported UBJSON Specification 
+Specification. It is derived from the widely supported UBJSON Specification 
 Draft 12 (https://github.com/ubjson/universal-binary-json), and adds native
 support for **N-dimensional packed arrays** - an essential data structure for
 scientific applications - as well as extended binary data types, including unsigned
@@ -95,7 +99,7 @@ License
 ------------------------------
 
 The Binary JData Specification is licensed under the
-[Apache 2.0 License](http://www.apache.org/licenses/LICENSE-2.0.html).
+[Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0.html).
 
 
 Format Specification
@@ -116,7 +120,7 @@ the data following it.
 `uint16`, `int16`, `uint32`, `int32`, `uint64` or `int64`) specifying the length 
 of the following data payload.
 
-- **data** (_optional_) - A contiguous byte-stream containing serialized binary  
+- **data** (_optional_) - A contiguous byte-stream containing serialized binary
 data representing the actual binary data for this type of value.
 
 ### Notes
@@ -170,6 +174,7 @@ Type | Total size | ASCII Marker(s) | Length required | Data (payload)
 [float64/double](#value_numeric) | 9 bytes | *D* | No | Yes
 [high-precision number](#value_numeric) | 1 byte + int num val + string byte len | *H* | Yes | Yes
 [char](#value_char) | 2 bytes | *C* | No | Yes
+[byte](#value_byte) | 2 bytes | *B* | No | Yes
 [string](#value_string) | 1 byte + int num val + string byte len | *S* | Yes | Yes (if not empty)
 [array](#container_array) | 2+ bytes | *\[* and *\]* | Optional | Yes (if not empty)
 [object](#container_object) | 2+ bytes | *{* and *}* | Optional | Yes (if not empty)
@@ -246,8 +251,8 @@ uint32| Yes | 0 | 4,294,967,295
 int64 | No | -9,223,372,036,854,775,808 | 9,223,372,036,854,775,807
 uint64| Yes | 0 | 18,446,744,073,709,551,615
 float16/half | Yes | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-2008_revision) | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-2008_revision)
-float32/single | Yes | See [IEEE 754 Spec](http://en.wikipedia.org/wiki/IEEE_754-1985) | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-1985)
-float64/double | Yes | See [IEEE 754 Spec](http://en.wikipedia.org/wiki/IEEE_754-1985) | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-1985)
+float32/single | Yes | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-1985) | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-1985)
+float64/double | Yes | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-1985) | See [IEEE 754 Spec](https://en.wikipedia.org/wiki/IEEE_754-1985)
 high-precision number | Yes | Infinite | Infinite
 
 **Notes**:
@@ -263,7 +268,7 @@ integers are written in Big-Endian order).
 
 #### Float
 All float types (`half`, `single`, `double` are written in **Little-Endian order** 
-(this is different from UBJSON which does not specify the endianness of floats).
+(this is different from UBJSON which does not specify the Endianness of floats).
 
 - `float16` or half-precision values are written in [IEEE 754 half precision floating point 
 format](https://en.wikipedia.org/wiki/IEEE_754-2008_revision), which has the following 
@@ -273,14 +278,14 @@ structure:
   - Bit 9-0 (10 bits) - fraction (significant)
 
 - `float32` or single-precision values are written in [IEEE 754 single precision floating point 
-format](http://en.wikipedia.org/wiki/IEEE_754-1985), which has the following 
+format](https://en.wikipedia.org/wiki/IEEE_754-1985), which has the following 
 structure:
   - Bit 31 (1 bit) - sign
   - Bit 30-23 (8 bits) - exponent
   - Bit 22-0 (23 bits) - fraction (significant)
 
 - `float64` or double-precision values are written in [IEEE 754 double precision floating point 
-format](http://en.wikipedia.org/wiki/IEEE_754-1985), which has the following 
+format](https://en.wikipedia.org/wiki/IEEE_754-1985), which has the following 
 structure:
   - Bit 63 (1 bit) - sign
   - Bit 62-52 (11 bits) - exponent
@@ -290,7 +295,7 @@ structure:
 #### High-Precision
 These are encoded as a string and thus are only limited by the maximum string 
 size. Values **must** be written out in accordance with the original [JSON 
-number type specification](http://json.org).
+number type specification](https://json.org).
 
 #### Examples
 Numeric values in JSON:
@@ -350,6 +355,33 @@ BJData (using block-notation):
 [{]
     [i][8][rolecode][C][a]
     [i][5][delim][C][;]
+[}]
+```
+
+---
+### <a name="value_byte"/>Byte
+The `byte` type in BJData is functionally identical to the `uint8` type, 
+but semantically is meant to represent a byte and not a numeric value. In
+particular, when used as the strong type of an array container it provides
+a hint to the parser that an optimized data storage format may be used as
+opposed to a generic array of integers.
+
+See also [optimized format](#container_optimized) below.
+
+#### Example
+Byte values in JSON:
+```json
+{
+    "binary": [222, 173, 190, 239]
+    "val": 123,
+}
+```
+
+BJData (using block-notation):
+```
+[{]
+    [i][6][binary] [[] [$][B] [#][i][4] [222][173][190][239]
+    [i][3][val][B][123]
 [}]
 ```
 
@@ -457,17 +489,17 @@ thought of as providing the ability to create a strongly-typed container in BJDa
 
 A major different between BJData and UBJSON is that the _type_ in a BJData
 strongly-typed container is limited to **non-zero-fixed-length data types**, therefore,
-only integers (`i,U,I,u,l,m,L,M`), floating-point numbers (`h,d,D`) and char (`C`)
+only integers (`i,U,I,u,l,m,L,M`), floating-point numbers (`h,d,D`), char (`C`) and byte (`B`)
 are qualified. All zero-length types (`T,F,Z,N`), variable-length types(`S, H`)
 and container types (`[,{`) shall not be used in an optimized _type_ header.
 This restriction is set to reduce the security risks due to potentials of
 buffer-overflow attacks using [zero-length markers](https://github.com/nlohmann/json/issues/2793),
-hampered readability and dimished benefit using variable/container
+hampered readability and diminished benefit using variable/container
 types in an optimized format.
 
 The requirements for _type_ are
 
-- If a _type_ is specified, it **must** be one of `i,U,I,u,l,m,L,M,h,d,D,C`.
+- If a _type_ is specified, it **must** be one of `i,U,I,u,l,m,L,M,h,d,D,C,B`.
 - If a _type_ is specified, it **must** be done so before a _count_.
 - If a _type_ is specified, a _count_ **must** be specified as well. (Otherwise 
 it is impossible to tell when a container is ending, e.g. did you just parse 
@@ -493,6 +525,14 @@ bytes while parsing.
 [#][i][64]
 ```
 
+### Optimized binary array
+When an array of _type_ `B` is specified the parser shall use an optimized data storage
+format to represent binary data where applicable, as opposed to a generic array of integers.
+Similarly, explicit binary data should be serialized as such to allow for parsers to
+make use of the optimization.
+
+If such a data storage format is not available, an array of integers shall be used.
+
 ### Optimized N-dimensional array of uniform type
 When both _type_ and _count_ are specified and the _count_ marker `#` is followed 
 by `[`, the parser should expect the following sequence to be a 1-D `array` with 
@@ -514,6 +554,19 @@ all non-negative numbers specifying the dimensions of the N-dimensional array.
 The binary data of the N-dimensional array is then serialized into a 1-D vector
 in the **row-major** element order (similar to C, C++, Javascript or Python) .
 
+To store an N-dimensional array that is serialized using the **column-major** element
+order (as used in MATLAB and FORTRAN), the _count_ marker `#` should be followed by
+an array of a single element, which must be a 1-D array of integer type as the
+dimensional vector above. Either of the arrays can be in optimized or non-optimized
+form. For example, either of the following 
+
+```
+[[] [$] [type] [#] [[] [[] [$] [Nx type] [#] [Ndim type] [Ndim] [Nx Ny Nz ...] []]  [a11 a21 a31 ... a21 a22 ...]
+  or
+[[] [$] [type] [#] [[] [[] [Nx type] [nx] [Ny type] [Ny] [Nz type] [Nz] ... []] []] [a11 a21 a31 ... a21 a22 ...]
+```
+represents the same column-major N-dimensional array of `type` and size `[Nx, Ny, Nz, ...]`.
+
 
 #### Example (a 2x3x4 `uint8` array):
 The following 2x3x4 3-D `uint8` array 
@@ -531,22 +584,26 @@ The following 2x3x4 3-D `uint8` array
       ]
 ]
 ```
-shall be stored as
+shall be stored using **row-major** serialized form as
 ```
  [[] [$][U] [#][[] [$][U][#][3] [2][3][4]
     [1][9][6][0] [2][9][3][1] [8][0][9][6] [6][4][2][7] [8][5][1][2] [3][3][2][6]
 ```
-
+or **column-major** serialized form as
+```
+ [[] [$][U] [#][[] [[] [$][U][#][3] [2][3][4] []]
+    [1][6][2][8] [8][3][9][4] [9][5][0][3] [6][2][3][1] [9][2][0][7] [1][2][6][6]
+```
 
 ### Additional rules
 - A _count_ **must** be >= 0.
-- A _count_ can be specified by itself.
+- A _count_ can be specified alone.
 - If a _count_ is specified, the container **must not** specify an end-marker.
 - A container that specifies a _count_ **must** contain the specified number of 
 child elements.
 - If a _type_ is specified, it **must** be done so before _count_.
 - If a _type_ is specified, a _count_ **must** also be specified. A _type_ 
-cannot be specified by itself.
+cannot be specified alone.
 - A container that specifies a _type_ **must not** contain any additional 
 _type_ markers for any contained value.
 
@@ -601,13 +658,13 @@ The MIME type for a Binary JData document is **`"application/jdata-binary"`**
 Acknowledgement
 ------------------------------
 
-The BJData spec is derived from the Universal Binary JSON (UBJSON, http://ubjson.org) 
+The BJData spec is derived from the Universal Binary JSON (UBJSON, https://ubjson.org) 
 specification (Draft 12) developed by Riyad Kalla and other UBJSON contributors.
 
 The initial version of this MarkDown-formatted specification was derived from the 
 documentation included in the [Py-UBJSON](https://github.com/Iotic-Labs/py-ubjson/blob/dev-contrib/UBJSON-Specification.md) 
 repository (Commit 5ce1fe7).
 
-This specification was developed as part of the NeuroJSON project (http://neurojson.org) 
+This specification was developed as part of the NeuroJSON project (https://neurojson.org) 
 with funding support from the US National Institute of Health (NIH) under
 grant [U24-NS124027](https://reporter.nih.gov/project-details/10308329).
