@@ -80,7 +80,7 @@ COMPILE_ARGS = ["-std=c99", "-DUSE__BJDATA"]
 
 setup(
     name="bjdata",
-    version="0.5.0",
+    version="0.5.1",
     description="Binary JData and UBJSON encoder/decoder",
     long_description=load_description("README.md"),
     long_description_content_type="text/markdown",

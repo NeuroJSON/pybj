@@ -1,3 +1,4 @@
+# Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
 # Copyright (c) 2019 Iotic Labs Ltd. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,10 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from __future__ import print_function, unicode_literals
 
+from sys import argv, exit, path  # pylint: disable=redefined-builtin
+import os
+
+# Add project_root to sys.path
+path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from abc import ABCMeta, abstractmethod
-from sys import argv, exit  # pylint: disable=redefined-builtin
 from traceback import print_exc
 from types import GeneratorType
 from contextlib import contextmanager

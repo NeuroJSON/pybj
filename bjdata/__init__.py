@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover
 from .encoder import EncoderException
 from .decoder import DecoderException
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __all__ = (
     "EXTENSION_ENABLED",

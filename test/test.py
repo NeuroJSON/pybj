@@ -13,8 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from sys import version_info, getrecursionlimit, setrecursionlimit, path
+import os
 
-from sys import version_info, getrecursionlimit, setrecursionlimit
+# Add project_root to sys.path
+path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from functools import partial
 from io import BytesIO, SEEK_END
 from unittest import TestCase, skipUnless
