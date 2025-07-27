@@ -17,13 +17,22 @@
 
 #pragma once
 
-#define NO_IMPORT_ARRAY
 #define PY_ARRAY_UNIQUE_SYMBOL bjdata_numpy_array
-#define NPY_NO_DEPRECATED_API 0
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+#define NPY_TARGET_VERSION NPY_2_0_API_VERSION
 #include <numpy/arrayobject.h>
 
 #if defined (__cplusplus)
 extern "C" {
+#endif
+
+// Add compatibility macros
+#ifndef NPY_ARRAY_C_CONTIGUOUS
+#define NPY_ARRAY_C_CONTIGUOUS NPY_C_CONTIGUOUS
+#endif
+
+#ifndef NPY_ARRAY_F_CONTIGUOUS
+#define NPY_ARRAY_F_CONTIGUOUS NPY_F_CONTIGUOUS
 #endif
 
 // NumPy 2.0 compatibility layer

@@ -19,6 +19,8 @@
 #include <bytesobject.h>
 #include <string.h>
 
+#define NO_IMPORT_ARRAY
+
 #include "numpyapi.h"
 #include "common.h"
 #include "markers.h"

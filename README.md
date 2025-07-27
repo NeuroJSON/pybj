@@ -5,7 +5,7 @@
 - Copyright: (C) Qianqian Fang (2020-2025) <q.fang at neu.edu>
 - Copyright: (C) Iotic Labs Ltd. (2016-2019) <vilnis.termanis at iotic-labs.com>
 - License: Apache License, Version 2.0
-- Version: 0.5.1
+- Version: 0.5.2
 - URL: https://pypi.org/project/bjdata/
 - Github: https://github.com/NeuroJSON/pybj
 - BJData Spec Version: [V1 Draft 3](https://neurojson.org/bjdata/draft3)

@@ -20,10 +20,7 @@
 #include "common.h"
 #include "encoder.h"
 #include "decoder.h"
-
-#define PY_ARRAY_UNIQUE_SYMBOL bjdata_numpy_array
-#define NPY_NO_DEPRECATED_API 0
-#include <numpy/arrayobject.h>
+#include "numpyapi.h"
 
 /******************************************************************************/
 
