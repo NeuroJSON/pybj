@@ -30,6 +30,7 @@ typedef struct {
     int container_count;
     int sort_keys;
     int no_float32;
+    int uint8_bytes;
     int islittle;
 } _bjdata_encoder_prefs_t;
 

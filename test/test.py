@@ -25,7 +25,7 @@ from collections import OrderedDict
 
 from bjdata import (dump as bjddump, dumpb as bjddumpb, load as bjdload, loadb as bjdloadb, EncoderException,
                     DecoderException, EXTENSION_ENABLED)
-from bjdata.markers import (TYPE_NULL, TYPE_NOOP, TYPE_BOOL_TRUE, TYPE_BOOL_FALSE, TYPE_INT8, TYPE_UINT8, TYPE_INT16,
+from bjdata.markers import (TYPE_NULL, TYPE_NOOP, TYPE_BOOL_TRUE, TYPE_BOOL_FALSE, TYPE_BYTE, TYPE_INT8, TYPE_UINT8, TYPE_INT16,
                             TYPE_INT32, TYPE_INT64, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_FLOAT16, TYPE_FLOAT32, TYPE_FLOAT64,
                             TYPE_HIGH_PREC, TYPE_CHAR, TYPE_STRING, OBJECT_START, OBJECT_END, ARRAY_START, ARRAY_END,
                             CONTAINER_TYPE, CONTAINER_COUNT)
@@ -180,8 +180,11 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
                 (TYPE_HIGH_PREC, 9999999999999999999999999999999999999, 40)):
             self.check_enc_dec(value, total_size, expected_type=type_)
 
-        self.assertEqual((self.bjdloadb(b'[$U#U\x08\x01\x02\x03\x04\x05\x06\x07\x08')
-            ==b'\x01\x02\x03\x04\x05\x06\x07\x08'), True)
+        self.assertEqual((self.bjdloadb(b'[$U#U\x08\x01\x02\x03\x04\x05\x06\x07\x08', uint8_bytes=True)
+            == b'\x01\x02\x03\x04\x05\x06\x07\x08'), True)
+
+        self.assertEqual((self.bjdloadb(b'[$B#U\x08\x01\x02\x03\x04\x05\x06\x07\x08')
+            == b'\x01\x02\x03\x04\x05\x06\x07\x08'), True)
 
         self.assertEqual((self.bjdloadb(b'[$u#U\x04\x01\x02\x03\x04\x05\x06\x07\x08')
             ==ndarray([513, 1027, 1541, 2055], np.uint16)).all(), True)
@@ -286,7 +289,7 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
     def test_bytes(self):
         # insufficient length
         with self.assertRaises(DecoderException):
-            self.bjdloadb(ARRAY_START + CONTAINER_TYPE + TYPE_UINT8 + CONTAINER_COUNT + TYPE_UINT8 + b'\x02' + b'\x01')
+            self.bjdloadb(ARRAY_START + CONTAINER_TYPE + TYPE_BYTE + CONTAINER_COUNT + TYPE_UINT8 + b'\x02' + b'\x01')
         for cast in (bytes, bytearray):
             self.check_enc_dec(cast(b''))
             self.check_enc_dec(cast(b'\x01' * 4))

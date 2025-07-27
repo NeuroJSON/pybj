@@ -27,11 +27,11 @@
 
 /******************************************************************************/
 
-// container_count, sort_keys, no_float32, islittle
-static _bjdata_encoder_prefs_t _bjdata_encoder_prefs_defaults = { NULL, 0, 0, 1, 1 };
+// container_count, sort_keys, no_float32, uint8_bytes, islittle
+static _bjdata_encoder_prefs_t _bjdata_encoder_prefs_defaults = { NULL, 0, 0, 1, 0, 1 };
 
-// no_bytes, object_pairs_hook, islittle
-static _bjdata_decoder_prefs_t _bjdata_decoder_prefs_defaults = { NULL, NULL, 0, 0, 1 };
+// no_bytes, uint8_bytes, object_pairs_hook, islittle
+static _bjdata_decoder_prefs_t _bjdata_decoder_prefs_defaults = { NULL, NULL, 0, 0, 0, 1 };
 
 /******************************************************************************/
 
@@ -104,7 +104,7 @@ PyDoc_STRVAR(_bjdata_load__doc__, "See pure Python version (encoder.load) for do
 static PyObject*
 _bjdata_load(PyObject *self, PyObject *args, PyObject *kwargs) {
     static const char *format = "O|iOOii:load";
-    static char *keywords[] = {"fp", "no_bytes", "object_hook", "object_pairs_hook", "intern_object_keys", "islittle", NULL};
+    static char *keywords[] = {"fp", "uint8_bytes", "object_hook", "object_pairs_hook", "intern_object_keys", "islittle", NULL};
 
     _bjdata_decoder_buffer_t *buffer = NULL;
     _bjdata_decoder_prefs_t prefs = _bjdata_decoder_prefs_defaults;
@@ -115,7 +115,7 @@ _bjdata_load(PyObject *self, PyObject *args, PyObject *kwargs) {
     PyObject *obj = NULL;
     UNUSED(self);
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, format, keywords, &fp, &prefs.no_bytes,  &prefs.object_hook,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, format, keywords, &fp, &prefs.uint8_bytes,  &prefs.object_hook,
                                      &prefs.object_pairs_hook, &prefs.intern_object_keys, &prefs.islittle)) {
         goto bail;
     }
@@ -159,7 +159,7 @@ PyDoc_STRVAR(_bjdata_loadb__doc__, "See pure Python version (encoder.loadb) for 
 static PyObject*
 _bjdata_loadb(PyObject *self, PyObject *args, PyObject *kwargs) {
     static const char *format = "O|iOOii:loadb";
-    static char *keywords[] = {"chars", "no_bytes", "object_hook", "object_pairs_hook", "intern_object_keys", "islittle", NULL};
+    static char *keywords[] = {"chars", "uint8_bytes", "object_hook", "object_pairs_hook", "intern_object_keys", "islittle", NULL};
 
     _bjdata_decoder_buffer_t *buffer = NULL;
     _bjdata_decoder_prefs_t prefs = _bjdata_decoder_prefs_defaults;
@@ -167,7 +167,7 @@ _bjdata_loadb(PyObject *self, PyObject *args, PyObject *kwargs) {
     PyObject *obj = NULL;
     UNUSED(self);
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, format, keywords, &chars, &prefs.no_bytes, &prefs.object_hook,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, format, keywords, &chars, &prefs.uint8_bytes, &prefs.object_hook,
                                      &prefs.object_pairs_hook, &prefs.intern_object_keys, &prefs.islittle)) {
         goto bail;
     }

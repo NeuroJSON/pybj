@@ -22,9 +22,9 @@ from io import BytesIO
 from math import isinf, isnan
 
 from .compat import Mapping, Sequence, INTEGER_TYPES, UNICODE_TYPE, TEXT_TYPES, BYTES_TYPES
-from .markers import (TYPE_NULL, TYPE_BOOL_TRUE, TYPE_BOOL_FALSE, TYPE_INT8, TYPE_UINT8, TYPE_INT16, TYPE_INT32,
-                      TYPE_INT64, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_FLOAT16, TYPE_FLOAT32, 
-		      TYPE_FLOAT64, TYPE_HIGH_PREC, TYPE_CHAR, TYPE_STRING, OBJECT_START,
+from .markers import (TYPE_NULL, TYPE_BOOL_TRUE, TYPE_BOOL_FALSE, TYPE_BYTE, TYPE_INT8, TYPE_UINT8, TYPE_INT16,
+                      TYPE_INT32, TYPE_INT64, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_FLOAT16, TYPE_FLOAT32,
+                      TYPE_FLOAT64, TYPE_HIGH_PREC, TYPE_CHAR, TYPE_STRING, OBJECT_START,
                       OBJECT_END, ARRAY_START, ARRAY_END, CONTAINER_TYPE, CONTAINER_COUNT)
 
 # Lookup tables for encoding small intergers, pre-initialised larger integer & float packers
@@ -57,7 +57,8 @@ __DTYPE_TO_MARKER = {
 }
 
 # Prefix applicable to specialised byte array container
-__BYTES_ARRAY_PREFIX = ARRAY_START + CONTAINER_TYPE + TYPE_UINT8 + CONTAINER_COUNT
+__BYTES_ARRAY_PREFIX = ARRAY_START + CONTAINER_TYPE + TYPE_BYTE + CONTAINER_COUNT
+__BYTES_ARRAY_PREFIX_DRAFT2 = ARRAY_START + CONTAINER_TYPE + TYPE_UINT8 + CONTAINER_COUNT
 
 
 class EncoderException(TypeError):
@@ -146,8 +147,8 @@ def __encode_string(fp_write, item, le=1):
     fp_write(encoded_val)
 
 
-def __encode_bytes(fp_write, item, le=1):
-    fp_write(__BYTES_ARRAY_PREFIX)
+def __encode_bytes(fp_write, item, uint8_bytes, le=1):
+    fp_write(__BYTES_ARRAY_PREFIX_DRAFT2 if uint8_bytes else __BYTES_ARRAY_PREFIX)
     length = len(item)
     if length < 2 ** 8:
         fp_write(__SMALL_UINTS_ENCODED[le][length])
@@ -157,7 +158,7 @@ def __encode_bytes(fp_write, item, le=1):
     # no ARRAY_END since length was specified
 
 
-def __encode_value(fp_write, item, seen_containers, container_count, sort_keys, no_float32, islittle, default):
+def __encode_value(fp_write, item, seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle, default):
     le=islittle
 
     if isinstance(item, UNICODE_TYPE):
@@ -185,26 +186,26 @@ def __encode_value(fp_write, item, seen_containers, container_count, sort_keys, 
         __encode_decimal(fp_write, item, le)
 
     elif isinstance(item, BYTES_TYPES):
-        __encode_bytes(fp_write, item)
+        __encode_bytes(fp_write, item, uint8_bytes, le)
 
     # order important since mappings could also be sequences
     elif isinstance(item, Mapping):
-        __encode_object(fp_write, item, seen_containers, container_count, sort_keys, no_float32, islittle, default)
+        __encode_object(fp_write, item, seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle, default)
 
     elif isinstance(item, Sequence):
-        __encode_array(fp_write, item, seen_containers, container_count, sort_keys, no_float32, islittle, default)
+        __encode_array(fp_write, item, seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle, default)
 
     elif default is not None:
-        __encode_value(fp_write, default(item), seen_containers, container_count, sort_keys, no_float32, islittle, default)
+        __encode_value(fp_write, default(item), seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle, default)
 
     elif type(item).__module__ == "numpy":
-        __encode_numpy(fp_write, item, islittle, default)
+        __encode_numpy(fp_write, item, uint8_bytes, islittle, default)
 
     else:
         raise EncoderException('Cannot encode item of type %s' % type(item))
 
 
-def __encode_array(fp_write, item, seen_containers, container_count, sort_keys, no_float32, islittle,  default):
+def __encode_array(fp_write, item, seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle,  default):
     # circular reference check
     container_id = id(item)
     if container_id in seen_containers:
@@ -217,7 +218,7 @@ def __encode_array(fp_write, item, seen_containers, container_count, sort_keys, 
         __encode_int(fp_write, len(item), islittle)
 
     for value in item:
-        __encode_value(fp_write, value, seen_containers, container_count, sort_keys, no_float32,  islittle, default)
+        __encode_value(fp_write, value, seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle, default)
 
     if not container_count:
         fp_write(ARRAY_END)
@@ -225,7 +226,7 @@ def __encode_array(fp_write, item, seen_containers, container_count, sort_keys, 
     del seen_containers[container_id]
 
 
-def __encode_object(fp_write, item, seen_containers, container_count, sort_keys, no_float32,  islittle, default):
+def __encode_object(fp_write, item, seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle, default):
     le=islittle;
     # circular reference check
     container_id = id(item)
@@ -250,7 +251,7 @@ def __encode_object(fp_write, item, seen_containers, container_count, sort_keys,
             __encode_int(fp_write, length, le)
         fp_write(encoded_key)
 
-        __encode_value(fp_write, value, seen_containers, container_count, sort_keys, no_float32,  islittle, default)
+        __encode_value(fp_write, value, seen_containers, container_count, sort_keys, no_float32, uint8_bytes, islittle, default)
 
     if not container_count:
         fp_write(OBJECT_END)
@@ -263,7 +264,7 @@ def __map_dtype(dtypestr):
     else:
         raise Exception("bjdata", "numpy dtype {} is not supported".format(dtypestr))
 
-def __encode_numpy(fp_write, item, islittle, default):
+def __encode_numpy(fp_write, item, uint8_bytes, islittle, default):
     try:
         import numpy as np
     except ImportError:
@@ -296,7 +297,7 @@ def __encode_numpy(fp_write, item, islittle, default):
     fp_write(item.data)
 
 
-def dump(obj, fp, container_count=False, sort_keys=False, no_float32=True, islittle=True, default=None):
+def dump(obj, fp, container_count=False, sort_keys=False, no_float32=True, uint8_bytes=False, islittle=True, default=None):
     """Writes the given object as BJData/UBJSON to the provided file-like object
 
     Args:
@@ -312,6 +313,10 @@ def dump(obj, fp, container_count=False, sort_keys=False, no_float32=True, islit
         no_float32 (bool): Never use float32 to store float numbers (other than
                            for zero). Disabling this might save space at the
                            loss of precision.
+        uint8_bytes (bool): If set, typed UBJSON arrays (uint8) will be
+                         converted to a bytes instance instead of being
+                         treated as an array (for UBJSON & BJData Draft 2).
+                         Ignored if no_bytes is set.
         islittle (1 or 0): default is 1 for little-endian for all numerics (for 
                             BJData Draft 2), change to 0 to use big-endian
                             (for UBJSON for BJData Draft 1)
@@ -342,8 +347,8 @@ def dump(obj, fp, container_count=False, sort_keys=False, no_float32=True, islit
     +------------------------------+-----------------------------------+
     | Decimal                      | high_precision                    |
     +------------------------------+-----------------------------------+
-    | (3) bytes, bytearray         | array (type, uint8)               |
-    | (2) str                      | array (type, uint8)               |
+    | (3) bytes, bytearray         | array (type, byte)                |
+    | (2) str                      | array (type, byte)                |
     +------------------------------+-----------------------------------+
     | (3) collections.abc.Mapping  | object                            |
     | (2) collections.Mapping      |                                   |
@@ -371,12 +376,12 @@ def dump(obj, fp, container_count=False, sort_keys=False, no_float32=True, islit
         raise TypeError('fp.write not callable')
     fp_write = fp.write
 
-    __encode_value(fp_write, obj, {}, container_count, sort_keys, no_float32, islittle, default)
+    __encode_value(fp_write, obj, {}, container_count, sort_keys, no_float32, uint8_bytes, islittle, default)
 
 
-def dumpb(obj, container_count=False, sort_keys=False, no_float32=True, islittle=True, default=None):
+def dumpb(obj, container_count=False, sort_keys=False, no_float32=True, uint8_bytes=False, islittle=True, default=None):
     """Returns the given object as BJData/UBJSON in a bytes instance. See dump() for
        available arguments."""
     with BytesIO() as fp:
-        dump(obj, fp, container_count=container_count, sort_keys=sort_keys, no_float32=no_float32, islittle=islittle, default=default)
+        dump(obj, fp, container_count=container_count, sort_keys=sort_keys, no_float32=no_float32, uint8_bytes=uint8_bytes, islittle=islittle, default=default)
         return fp.getvalue()

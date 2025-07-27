@@ -142,7 +142,8 @@ an extended Universal Binary JSON (UBJSON) Specification Draft-12 by adding
 the below new features:
 
 * BJData adds 4 new numeric data types: `uint16 [u]`, `uint32 [m]`, `uint64 [M]` and `float16 [h]`
+* BJData adds a dedicated byte data type used in optimized array containers for binary data
 * BJData supports an optimized ND array container
 * BJData does not convert NaN/Inf/-Inf to `null`
 * BJData uses little-Endian as the default integer/floating-point numbers while UBJSON uses big-Endian
-* BJData only permits non-zero-fixed-length data types (`UiuImlMLhdDC`) in strongly-typed array/object containers
+* BJData only permits non-zero-fixed-length data types (`UiuImlMLhdDCB`) in strongly-typed array/object containers

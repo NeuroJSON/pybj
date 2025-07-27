@@ -31,7 +31,7 @@
 
 /******************************************************************************/
 
-static char bytes_array_prefix[] = {ARRAY_START, CONTAINER_TYPE, TYPE_UINT8, CONTAINER_COUNT};
+static char bytes_array_prefix[] = {ARRAY_START, CONTAINER_TYPE, TYPE_BYTE, CONTAINER_COUNT};
 
 #define POWER_TWO(x) ((long long) 1 << (x))
 

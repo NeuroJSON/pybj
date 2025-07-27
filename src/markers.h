@@ -26,6 +26,7 @@ extern "C" {
 #define TYPE_NOOP 'N'
 #define TYPE_BOOL_TRUE 'T'
 #define TYPE_BOOL_FALSE 'F'
+#define TYPE_BYTE 'B'
 #define TYPE_INT8 'i'
 #define TYPE_UINT8 'U'
 #define TYPE_INT16 'I'
