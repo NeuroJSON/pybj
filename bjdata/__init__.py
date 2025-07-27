@@ -1,4 +1,4 @@
-# Copyright (c) 2020-2023 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
+# Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
 # Copyright (c) 2016-2019 Iotic Labs Ltd. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,15 +29,25 @@ To use a file-like object as input/output, use dump() & load() methods instead.
 
 try:
     from _bjdata import dump, dumpb, load, loadb
+
     EXTENSION_ENABLED = True
 except ImportError:  # pragma: no cover
     from .encoder import dump, dumpb
     from .decoder import load, loadb
+
     EXTENSION_ENABLED = False
 
 from .encoder import EncoderException
 from .decoder import DecoderException
 
-__version__ = '0.5.0'
+__version__ = "0.5.0"
 
-__all__ = ('EXTENSION_ENABLED', 'dump', 'dumpb', 'EncoderException', 'load', 'loadb', 'DecoderException')
+__all__ = (
+    "EXTENSION_ENABLED",
+    "dump",
+    "dumpb",
+    "EncoderException",
+    "load",
+    "loadb",
+    "DecoderException",
+)

@@ -1,4 +1,4 @@
-# Copyright (c) 2020-2023 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
+# Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
 # Copyright (c) 2016-2019 Iotic Labs Ltd. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,7 +43,7 @@
 
 from sys import stderr, stdout, stdin, version_info
 
-PY2 = (version_info[0] == 2)
+PY2 = version_info[0] == 2
 
 if PY2:
     # pylint: disable=undefined-variable
@@ -66,9 +66,9 @@ else:
     TEXT_TYPES = (str,)
     BYTES_TYPES = (bytes, bytearray)
 
-    STDIN_RAW = getattr(stdin, 'buffer', stdin)
-    STDOUT_RAW = getattr(stdout, 'buffer', stdout)
-    STDERR_RAW = getattr(stderr, 'buffer', stderr)
+    STDIN_RAW = getattr(stdin, "buffer", stdin)
+    STDOUT_RAW = getattr(stdout, "buffer", stdout)
+    STDERR_RAW = getattr(stderr, "buffer", stderr)
     from sys import intern as intern_unicode  # noqa: F401
 
 try:
@@ -80,16 +80,21 @@ except ImportError:
 
 if version_info[:2] == (3, 2):
     # pylint: disable=exec-used
-    exec("""def raise_from(value, from_value):
+    exec(
+        """def raise_from(value, from_value):
     if from_value is None:
         raise value
     raise value from from_value
-""")
+"""
+    )
 elif version_info[:2] > (3, 2):
     # pylint: disable=exec-used
-    exec("""def raise_from(value, from_value):
+    exec(
+        """def raise_from(value, from_value):
     raise value from from_value
-""")
+"""
+    )
 else:
+
     def raise_from(value, _):
         raise value

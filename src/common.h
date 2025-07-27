@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2023 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
+ * Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
  * Copyright (c) 2016-2019 Iotic Labs Ltd. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,19 +29,19 @@ extern "C" {
 #define UNUSED(x) (void)(x)
 
 #define BAIL_ON_NULL(result)\
-if (NULL == (result)) {\
-    goto bail;\
-}
+    if (NULL == (result)) {\
+        goto bail;\
+    }
 
 #define BAIL_ON_NONZERO(result)\
-if (result) {\
-    goto bail;\
-}
+    if (result) {\
+        goto bail;\
+    }
 
 #define BAIL_ON_NEGATIVE(result)\
-if ((result) < 0) {\
-    goto bail;\
-}
+    if ((result) < 0) {\
+        goto bail;\
+    }
 
 #if defined (__cplusplus)
 }

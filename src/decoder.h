@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2023 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
+ * Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
  * Copyright (c) 2016-2019 Iotic Labs Ltd. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,8 +26,8 @@ extern "C" {
 /******************************************************************************/
 
 typedef struct {
-    PyObject *object_hook;
-    PyObject *object_pairs_hook;
+    PyObject* object_hook;
+    PyObject* object_pairs_hook;
     // don't convert BYTE arrays to bytes instances (and keep as an array of individual integers)
     int no_bytes;
     int intern_object_keys;
@@ -37,11 +37,11 @@ typedef struct {
 
 typedef struct _bjdata_decoder_buffer_t {
     // either supports buffer interface or is callable returning bytes
-    PyObject *input;
+    PyObject* input;
     // NULL unless input supports seeking in which case expecting callable with signature of io.IOBase.seek()
-    PyObject *seek;
+    PyObject* seek;
     // function used to read data from this buffer with (depending on whether fixed, callable or seekable)
-    const char* (*read_func)(struct _bjdata_decoder_buffer_t *buffer, Py_ssize_t *len, char *dst_buffer);
+    const char* (*read_func)(struct _bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer);
     // buffer protocol access to raw bytes of input
     Py_buffer view;
     // whether view will need to be released
@@ -51,18 +51,18 @@ typedef struct _bjdata_decoder_buffer_t {
     // total bytes supplied to user (same as pos in case where callable not used)
     Py_ssize_t total_read;
     // temporary destination buffer if required read larger than currently available input
-    char *tmp_dst;
+    char* tmp_dst;
     _bjdata_decoder_prefs_t prefs;
 } _bjdata_decoder_buffer_t;
 
 /******************************************************************************/
 
 extern _bjdata_decoder_buffer_t* _bjdata_decoder_buffer_create(_bjdata_decoder_prefs_t* prefs,
-                                                               PyObject *input, PyObject *seek);
-extern int _bjdata_decoder_buffer_free(_bjdata_decoder_buffer_t **buffer);
+        PyObject* input, PyObject* seek);
+extern int _bjdata_decoder_buffer_free(_bjdata_decoder_buffer_t** buffer);
 extern int _bjdata_decoder_init(void);
 // note: marker argument only used internally - supply NULL
-extern PyObject* _bjdata_decode_value(_bjdata_decoder_buffer_t *buffer, char *given_marker);
+extern PyObject* _bjdata_decode_value(_bjdata_decoder_buffer_t* buffer, char* given_marker);
 extern void _bjdata_decoder_cleanup(void);
 
 #if defined (__cplusplus)

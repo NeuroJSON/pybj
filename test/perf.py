@@ -23,7 +23,12 @@ from time import time
 import gc
 import cProfile
 
-from json import __version__ as j_version, dumps as j_enc, loads as j_dec, load as j_load
+from json import (
+    __version__ as j_version,
+    dumps as j_enc,
+    loads as j_dec,
+    load as j_load,
+)
 
 # ------------------------------------------------------------------------------
 
@@ -50,11 +55,11 @@ class LibWrapper(object):
 
 # Python's built-in JSON module
 
-class Json(LibWrapper):
 
+class Json(LibWrapper):
     @staticmethod
     def name():
-        return 'json %s' % j_version
+        return "json %s" % j_version
 
     @staticmethod
     def encode(obj):
@@ -72,13 +77,13 @@ TEST_LIBS = [Json]
 try:
     from bjdata import __version__ as bjd_version, dumpb as bjd_enc, loadb as bjd_dec
 except ImportError:
-    print('Failed to import bjdata, ignoring')
+    print("Failed to import bjdata, ignoring")
 else:
-    class PyUbjson(LibWrapper):
 
+    class PyUbjson(LibWrapper):
         @staticmethod
         def name():
-            return 'py-bjdata %s' % bjd_version
+            return "py-bjdata %s" % bjd_version
 
         @staticmethod
         def encode(obj):
@@ -87,20 +92,25 @@ else:
         @staticmethod
         def decode(obj):
             return bjd_dec(obj)
+
     TEST_LIBS.append(PyUbjson)
 
 # simplebjdata
 
 try:
-    from simplebjdata import __version__ as sbjd_version, encode as sbjd_enc, decode as sbjd_dec
+    from simplebjdata import (
+        __version__ as sbjd_version,
+        encode as sbjd_enc,
+        decode as sbjd_dec,
+    )
 except ImportError:
-    print('Failed to import simplebjdata, ignoring')
+    print("Failed to import simplebjdata, ignoring")
 else:
-    class SimpleUbjson(LibWrapper):
 
+    class SimpleUbjson(LibWrapper):
         @staticmethod
         def name():
-            return 'simplebjdata %s' % sbjd_version
+            return "simplebjdata %s" % sbjd_version
 
         @staticmethod
         def encode(obj):
@@ -111,10 +121,11 @@ else:
             val = sbjd_dec(obj)
             # ugly: decoder only returns iterator if object or array (and only know by name of generator which it is)
             if isinstance(val, GeneratorType):
-                if val.__name__ == 'array_stream':
+                if val.__name__ == "array_stream":
                     return list(val)
                 return dict(val)
             return val
+
     TEST_LIBS.append(SimpleUbjson)
 
 # ------------------------------------------------------------------------------
@@ -132,14 +143,14 @@ def profiled(name=None, no_profile=False):
         finally:
             profile.disable()
         if name:
-            print('stats for %s' % name)
-        profile.print_stats('tottime')
+            print("stats for %s" % name)
+        profile.print_stats("tottime")
 
 
 def test_all_with(name, repeats=1000):
     no_profile = True
 
-    with open(name, 'r') as in_file:
+    with open(name, "r") as in_file:
         obj = j_load(in_file)
         row_start = '"%s",%d' % (name, in_file.tell())
 
@@ -172,14 +183,14 @@ def main():
         if repeats < 1:
             raise ValueError
     except ValueError:
-        print('USAGE: perf.py REPEATS INPUT1 [INPUT2] ..')
+        print("USAGE: perf.py REPEATS INPUT1 [INPUT2] ..")
         return 1
 
     for name in argv[2:]:
         try:
             test_all_with(name, repeats=repeats)
         except:  # pylint: disable=bare-except
-            print('Failed to test with %s' % name)
+            print("Failed to test with %s" % name)
             print_exc()
             return 2
 

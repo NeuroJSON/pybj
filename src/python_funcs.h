@@ -51,10 +51,10 @@ extern void _pyfuncs_ubj_detect_formats(void);
  * 1):  What this does is undefined if x is a NaN or infinity.
  * 2):  -0.0 and +0.0 produce the same string.
  */
-extern int _pyfuncs_ubj_PyFloat_Pack4(double x, unsigned char *p, int le);
-extern int _pyfuncs_ubj_PyFloat_Pack8(double x, unsigned char *p, int le);
-extern double _pyfuncs_ubj_PyFloat_Unpack4(const unsigned char *p, int le);
-extern double _pyfuncs_ubj_PyFloat_Unpack8(const unsigned char *p, int le);
+extern int _pyfuncs_ubj_PyFloat_Pack4(double x, unsigned char* p, int le);
+extern int _pyfuncs_ubj_PyFloat_Pack8(double x, unsigned char* p, int le);
+extern double _pyfuncs_ubj_PyFloat_Unpack4(const unsigned char* p, int le);
+extern double _pyfuncs_ubj_PyFloat_Unpack8(const unsigned char* p, int le);
 
 #ifdef __cplusplus
 }

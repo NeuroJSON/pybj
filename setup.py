@@ -27,6 +27,7 @@ try:
     from setuptools import setup
 except ImportError:
     from ez_setup import use_setuptools
+
     use_setuptools()
     from setuptools import setup  # pylint: disable=ungrouped-imports
 
@@ -38,7 +39,7 @@ from distutils.errors import DistutilsPlatformError, DistutilsExecError
 
 def load_description(filename):
     script_dir = os.path.abspath(os.path.dirname(__file__))
-    with open(os.path.join(script_dir, filename), 'r') as infile:
+    with open(os.path.join(script_dir, filename), "r") as infile:
         return infile.read()
 
 
@@ -51,74 +52,89 @@ class BuildExtWarnOnFail(build_ext):
             build_ext.run(self)
         except DistutilsPlatformError:
             ex = sys.exc_info()[1]
-            sys.stdout.write('%s\n' % str(ex))
-            warnings.warn("Extension modules: There was an issue with your platform configuration - see above.")
+            sys.stdout.write("%s\n" % str(ex))
+            warnings.warn(
+                "Extension modules: There was an issue with your platform configuration - see above."
+            )
 
     def build_extension(self, ext):
         try:
             build_ext.build_extension(self, ext)
         except (CCompilerError, DistutilsExecError, DistutilsPlatformError, IOError):
             ex = sys.exc_info()[1]
-            sys.stdout.write('%s\n' % str(ex))
-            warnings.warn("Extension module %s: The output above this warning shows how the compilation failed."
-                          % ext.name)
+            sys.stdout.write("%s\n" % str(ex))
+            warnings.warn(
+                "Extension module %s: The output above this warning shows how the compilation failed."
+                % ext.name
+            )
 
 
-BUILD_EXTENSIONS = 'PYBJDATA_NO_EXTENSION' not in os.environ and python_implementation() != 'PyPy'
+BUILD_EXTENSIONS = (
+    "PYBJDATA_NO_EXTENSION" not in os.environ and python_implementation() != "PyPy"
+)
 
-COMPILE_ARGS = ['-std=c99', '-DUSE__BJDATA']
+COMPILE_ARGS = ["-std=c99", "-DUSE__BJDATA"]
 # For testing/debug only - some of these are GCC-specific
 # COMPILE_ARGS += ['-Wall', '-Wextra', '-Wundef', '-Wshadow', '-Wcast-align', '-Wcast-qual', '-Wstrict-prototypes',
 #                  '-pedantic']
 
 setup(
-    name='bjdata',
-    version='0.5.0',
-    description='Binary JData and UBJSON encoder/decoder',
-    long_description=load_description('README.md'),
-    long_description_content_type='text/markdown',
-    author='Qianqian Fang',
-    author_email='fangqq@gmail.com',
-    maintainer='Qianqian Fang',
-    maintainer_email='fangqq@gmail.com',
-    url='https://github.com/NeuroJSON/pybj',
-    license='Apache License 2.0',
-    packages=['bjdata'],
-    install_requires=[
-       'numpy>=1.8.0'
-    ],
-    extras_require={
-        'dev': [
-            'Pympler>=0.7 ,<0.8',
-            'coverage>=4.5.3,<4.6'
-        ]
-    },
+    name="bjdata",
+    version="0.5.0",
+    description="Binary JData and UBJSON encoder/decoder",
+    long_description=load_description("README.md"),
+    long_description_content_type="text/markdown",
+    author="Qianqian Fang",
+    author_email="fangqq@gmail.com",
+    maintainer="Qianqian Fang",
+    maintainer_email="fangqq@gmail.com",
+    url="https://github.com/NeuroJSON/pybj",
+    license="Apache License 2.0",
+    packages=["bjdata"],
+    install_requires=["numpy>=1.8.0"],
+    extras_require={"dev": ["Pympler>=0.7 ,<0.8", "coverage>=4.5.3,<4.6"]},
     zip_safe=False,
-    ext_modules=([Extension(
-        '_bjdata',
-        sorted(glob('src/*.c')),
-        include_dirs=[numpy.get_include()],
-        extra_compile_args=COMPILE_ARGS,
-        # undef_macros=['NDEBUG']
-    )] if BUILD_EXTENSIONS else []),
+    ext_modules=(
+        [
+            Extension(
+                "_bjdata",
+                sorted(glob("src/*.c")),
+                include_dirs=[numpy.get_include()],
+                extra_compile_args=COMPILE_ARGS,
+                # undef_macros=['NDEBUG']
+            )
+        ]
+        if BUILD_EXTENSIONS
+        else []
+    ),
     cmdclass={"build_ext": BuildExtWarnOnFail},
-    keywords = ['JSON', 'JData', 'UBJSON', 'BJData', 'OpenJData', 'NeuroJSON', 'JNIfTI', 'Encoder', 'Decoder'],
+    keywords=[
+        "JSON",
+        "JData",
+        "UBJSON",
+        "BJData",
+        "OpenJData",
+        "NeuroJSON",
+        "JNIfTI",
+        "Encoder",
+        "Decoder",
+    ],
     classifiers=[
-        'Development Status :: 4 - Beta',
-        'License :: OSI Approved :: Apache Software License',
-        'Intended Audience :: Developers',
-        'Programming Language :: C',
-        'Programming Language :: Python',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3.2',
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
-        'Topic :: Software Development :: Libraries',
-        'Topic :: Software Development :: Libraries :: Python Modules'
-    ]
+        "Development Status :: 4 - Beta",
+        "License :: OSI Approved :: Apache Software License",
+        "Intended Audience :: Developers",
+        "Programming Language :: C",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 2.7",
+        "Programming Language :: Python :: 3.2",
+        "Programming Language :: Python :: 3.3",
+        "Programming Language :: Python :: 3.4",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+    ],
 )

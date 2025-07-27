@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2023 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
+ * Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
  * Copyright (c) 2016-2019 Iotic Labs Ltd. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@ extern "C" {
 /******************************************************************************/
 
 typedef struct {
-    PyObject *default_func;
+    PyObject* default_func;
     int container_count;
     int sort_keys;
     int no_float32;
@@ -36,24 +36,24 @@ typedef struct {
 
 typedef struct {
     // holds PyBytes instance (buffer)
-    PyObject *obj;
+    PyObject* obj;
     // raw access to obj, size & position
     char* raw;
     size_t len;
     size_t pos;
     // if not NULL, full buffer will be written to this method
-    PyObject *fp_write;
+    PyObject* fp_write;
     // PySet of sequences and mappings for detecting a circular reference
-    PyObject *markers;
+    PyObject* markers;
     _bjdata_encoder_prefs_t prefs;
 } _bjdata_encoder_buffer_t;
 
 /******************************************************************************/
 
-extern _bjdata_encoder_buffer_t* _bjdata_encoder_buffer_create(_bjdata_encoder_prefs_t* prefs, PyObject *fp_write);
-extern void _bjdata_encoder_buffer_free(_bjdata_encoder_buffer_t **buffer);
-extern PyObject* _bjdata_encoder_buffer_finalise(_bjdata_encoder_buffer_t *buffer);
-extern int _bjdata_encode_value(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
+extern _bjdata_encoder_buffer_t* _bjdata_encoder_buffer_create(_bjdata_encoder_prefs_t* prefs, PyObject* fp_write);
+extern void _bjdata_encoder_buffer_free(_bjdata_encoder_buffer_t** buffer);
+extern PyObject* _bjdata_encoder_buffer_finalise(_bjdata_encoder_buffer_t* buffer);
+extern int _bjdata_encode_value(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 extern int _bjdata_encoder_init(void);
 extern void _bjdata_encoder_cleanup(void);
 

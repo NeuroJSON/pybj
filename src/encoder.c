@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2023 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
+ * Copyright (c) 2020-2025 Qianqian Fang <q.fang at neu.edu>. All rights reserved.
  * Copyright (c) 2016-2019 Iotic Labs Ltd. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,11 +19,7 @@
 #include <bytesobject.h>
 #include <string.h>
 
-#define NO_IMPORT_ARRAY
-#define PY_ARRAY_UNIQUE_SYMBOL bjdata_numpy_array
-#define NPY_NO_DEPRECATED_API 0
-#include <numpy/arrayobject.h>
-
+#include "numpyapi.h"
 #include "common.h"
 #include "markers.h"
 #include "encoder.h"
@@ -36,7 +32,7 @@ static char bytes_array_prefix[] = {ARRAY_START, CONTAINER_TYPE, TYPE_BYTE, CONT
 #define POWER_TWO(x) ((long long) 1 << (x))
 
 #if defined(_MSC_VER) && !defined(fpclassify)
-#   define USE__FPCLASS
+    #define USE__FPCLASS
 #endif
 
 // initial encoder buffer size (when not supplied with fp)
@@ -44,44 +40,44 @@ static char bytes_array_prefix[] = {ARRAY_START, CONTAINER_TYPE, TYPE_BYTE, CONT
 // encoder buffer size when using fp (i.e. minimum number of bytes to buffer before writing out)
 #define BUFFER_FP_SIZE 256
 
-static PyObject *EncoderException = NULL;
-static PyTypeObject *PyDec_Type = NULL;
+static PyObject* EncoderException = NULL;
+static PyTypeObject* PyDec_Type = NULL;
 #define PyDec_Check(v) PyObject_TypeCheck(v, PyDec_Type)
 
 /******************************************************************************/
 
-static int _encoder_buffer_write(_bjdata_encoder_buffer_t *buffer, const char* const chunk, size_t chunk_len);
+static int _encoder_buffer_write(_bjdata_encoder_buffer_t* buffer, const char* const chunk, size_t chunk_len);
 
 #define RECURSE_AND_BAIL_ON_NONZERO(action, recurse_msg) {\
-    int ret;\
-    BAIL_ON_NONZERO(Py_EnterRecursiveCall(recurse_msg));\
-    ret = (action);\
-    Py_LeaveRecursiveCall();\
-    BAIL_ON_NONZERO(ret);\
-}
+        int ret;\
+        BAIL_ON_NONZERO(Py_EnterRecursiveCall(recurse_msg));\
+        ret = (action);\
+        Py_LeaveRecursiveCall();\
+        BAIL_ON_NONZERO(ret);\
+    }
 
 #define WRITE_OR_BAIL(str, len) BAIL_ON_NONZERO(_encoder_buffer_write(buffer, (str), len))
 #define WRITE_CHAR_OR_BAIL(c) {\
-    char ctmp = (c);\
-    WRITE_OR_BAIL(&ctmp, 1);\
-}
+        char ctmp = (c);\
+        WRITE_OR_BAIL(&ctmp, 1);\
+    }
 
 /* These functions return non-zero on failure (an exception will have been set). Note that no type checking is performed
  * where a Python type is mentioned in the function name!
  */
-static int _encode_PyBytes(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_PyObject_as_PyDecimal(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_PyDecimal(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_PyUnicode(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_PyLong(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_longlong(long long num, _bjdata_encoder_buffer_t *buffer);
+static int _encode_PyBytes(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_PyObject_as_PyDecimal(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_PyDecimal(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_PyUnicode(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_PyFloat(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_PyLong(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_longlong(long long num, _bjdata_encoder_buffer_t* buffer);
 #if PY_MAJOR_VERSION < 3
-static int _encode_PyInt(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
+    static int _encode_PyInt(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 #endif
-static int _encode_PySequence(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_mapping_key(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
-static int _encode_PyMapping(PyObject *obj, _bjdata_encoder_buffer_t *buffer);
+static int _encode_PySequence(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_mapping_key(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_PyMapping(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 
 const int numpytypes[][2] = {
     {NPY_BOOL,       TYPE_UINT8},
@@ -120,8 +116,8 @@ const int numpytypes[][2] = {
 /* fp_write, if not NULL, must be a callable which accepts a single bytes argument. On failure will set exception.
  * Currently only increases reference count for fp_write parameter.
  */
-_bjdata_encoder_buffer_t* _bjdata_encoder_buffer_create(_bjdata_encoder_prefs_t* prefs, PyObject *fp_write) {
-    _bjdata_encoder_buffer_t *buffer;
+_bjdata_encoder_buffer_t* _bjdata_encoder_buffer_create(_bjdata_encoder_prefs_t* prefs, PyObject* fp_write) {
+    _bjdata_encoder_buffer_t* buffer;
 
     if (NULL == (buffer = calloc(1, sizeof(_bjdata_encoder_buffer_t)))) {
         PyErr_NoMemory();
@@ -151,7 +147,7 @@ bail:
     return NULL;
 }
 
-void _bjdata_encoder_buffer_free(_bjdata_encoder_buffer_t **buffer) {
+void _bjdata_encoder_buffer_free(_bjdata_encoder_buffer_t** buffer) {
     if (NULL != buffer && NULL != *buffer) {
         Py_XDECREF((*buffer)->obj);
         Py_XDECREF((*buffer)->fp_write);
@@ -162,9 +158,9 @@ void _bjdata_encoder_buffer_free(_bjdata_encoder_buffer_t **buffer) {
 }
 
 // Note: Sets python exception on failure and returns non-zero
-static int _encoder_buffer_write(_bjdata_encoder_buffer_t *buffer, const char* const chunk, size_t chunk_len) {
+static int _encoder_buffer_write(_bjdata_encoder_buffer_t* buffer, const char* const chunk, size_t chunk_len) {
     size_t new_len;
-    PyObject *fp_write_ret;
+    PyObject* fp_write_ret;
 
     if (0 == chunk_len) {
         return 0;
@@ -175,10 +171,12 @@ static int _encoder_buffer_write(_bjdata_encoder_buffer_t *buffer, const char* c
         // increase buffer size if too small
         if (chunk_len > (buffer->len - buffer->pos)) {
             for (new_len = buffer->len; new_len < (buffer->pos + chunk_len); new_len *= 2);
+
             BAIL_ON_NONZERO(_PyBytes_Resize(&buffer->obj, new_len));
             buffer->raw = PyBytes_AS_STRING(buffer->obj);
             buffer->len = new_len;
         }
+
         memcpy(&(buffer->raw[buffer->pos]), chunk, sizeof(char) * chunk_len);
         buffer->pos += chunk_len;
 
@@ -189,6 +187,7 @@ static int _encoder_buffer_write(_bjdata_encoder_buffer_t *buffer, const char* c
             buffer->raw = PyBytes_AS_STRING(buffer->obj);
             buffer->len = buffer->pos + chunk_len;
         }
+
         memcpy(&(buffer->raw[buffer->pos]), chunk, sizeof(char) * chunk_len);
         buffer->pos += chunk_len;
 
@@ -203,6 +202,7 @@ static int _encoder_buffer_write(_bjdata_encoder_buffer_t *buffer, const char* c
             buffer->pos = 0;
         }
     }
+
     return 0;
 
 bail:
@@ -211,14 +211,15 @@ bail:
 
 // Flushes remaining bytes to writer and returns None or returns final bytes object (when no writer specified).
 // Does NOT free passed in buffer struct.
-PyObject* _bjdata_encoder_buffer_finalise(_bjdata_encoder_buffer_t *buffer) {
-    PyObject *fp_write_ret;
+PyObject* _bjdata_encoder_buffer_finalise(_bjdata_encoder_buffer_t* buffer) {
+    PyObject* fp_write_ret;
 
     // shrink buffer to fit
     if (buffer->pos < buffer->len) {
         BAIL_ON_NONZERO(_PyBytes_Resize(&buffer->obj, buffer->pos));
         buffer->len = buffer->pos;
     }
+
     if (NULL == buffer->fp_write) {
         Py_INCREF(buffer->obj);
         return buffer->obj;
@@ -227,6 +228,7 @@ PyObject* _bjdata_encoder_buffer_finalise(_bjdata_encoder_buffer_t *buffer) {
             BAIL_ON_NULL(fp_write_ret = PyObject_CallFunctionObjArgs(buffer->fp_write, buffer->obj, NULL));
             Py_DECREF(fp_write_ret);
         }
+
         Py_RETURN_NONE;
     }
 
@@ -236,8 +238,8 @@ bail:
 
 /******************************************************************************/
 
-static int _encode_PyBytes(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    const char *raw;
+static int _encode_PyBytes(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    const char* raw;
     Py_ssize_t len;
 
     raw = PyBytes_AS_STRING(obj);
@@ -254,8 +256,8 @@ bail:
     return 1;
 }
 
-static int _encode_PyByteArray(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    const char *raw;
+static int _encode_PyByteArray(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    const char* raw;
     Py_ssize_t len;
 
     raw = PyByteArray_AS_STRING(obj);
@@ -276,17 +278,20 @@ bail:
 
 static int _lookup_marker(npy_intp numpytypeid) {
     int i, len = (sizeof(numpytypes) >> 3);
-    for(i = 0; i < len; i++){
-        if(numpytypeid == (npy_intp)numpytypes[i][0])
+
+    for (i = 0; i < len; i++) {
+        if (numpytypeid == (npy_intp)numpytypes[i][0]) {
             return numpytypes[i][1];
+        }
     }
+
     return -1;
 }
 
-static int _encode_NDarray(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyArrayObject *arr;
+static int _encode_NDarray(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyArrayObject* arr;
     Py_INCREF(obj);
-    arr = (PyArrayObject *)PyArray_EnsureArray(obj);
+    arr = (PyArrayObject*)PyArray_EnsureArray(obj);
     BAIL_ON_NONZERO(arr == NULL);
 
     int ndim = PyArray_NDIM(arr);
@@ -296,36 +301,46 @@ static int _encode_NDarray(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
     int marker = _lookup_marker(type);
 
     BAIL_ON_NONZERO(marker < 0)
-    if(ndim == 0){  /*scalar*/
+
+    if (ndim == 0) { /*scalar*/
         WRITE_CHAR_OR_BAIL((char)marker);
-        if(marker == TYPE_STRING) {
+
+        if (marker == TYPE_STRING) {
             _encode_longlong(bytes, buffer);
         }
+
         WRITE_OR_BAIL(PyArray_BYTES(arr), bytes);
         Py_DECREF(arr);
         return 0;
     }
 
-    npy_intp * dims = PyArray_DIMS(arr);
+    npy_intp* dims = PyArray_DIMS(arr);
     npy_intp total = PyArray_SIZE(arr);
 
     WRITE_CHAR_OR_BAIL(ARRAY_START);
     WRITE_CHAR_OR_BAIL(CONTAINER_TYPE);
-    if(marker == TYPE_STRING) {
+
+    if (marker == TYPE_STRING) {
         WRITE_CHAR_OR_BAIL(TYPE_CHAR);
     } else {
         WRITE_CHAR_OR_BAIL((char)marker);
     }
+
     WRITE_CHAR_OR_BAIL(CONTAINER_COUNT);
 
     WRITE_CHAR_OR_BAIL(ARRAY_START);
-    for(int i=0 ; i<ndim; i++)
+
+    for (int i = 0 ; i < ndim; i++) {
         _encode_longlong(dims[i], buffer);
-    if(type == NPY_UNICODE)
+    }
+
+    if (type == NPY_UNICODE) {
         _encode_longlong(4, buffer);
+    }
+
     WRITE_CHAR_OR_BAIL(ARRAY_END);
 
-    WRITE_OR_BAIL(PyArray_BYTES(arr), bytes*total);
+    WRITE_OR_BAIL(PyArray_BYTES(arr), bytes * total);
     Py_DECREF(arr);
     // no ARRAY_END since length was specified
 
@@ -337,8 +352,8 @@ bail:
 
 /******************************************************************************/
 
-static int _encode_PyObject_as_PyDecimal(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyObject *decimal = NULL;
+static int _encode_PyObject_as_PyDecimal(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* decimal = NULL;
 
     // Decimal class has no public C API
     BAIL_ON_NULL(decimal =  PyObject_CallFunctionObjArgs((PyObject*)PyDec_Type, obj, NULL));
@@ -351,11 +366,11 @@ bail:
     return 1;
 }
 
-static int _encode_PyDecimal(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyObject *is_finite;
-    PyObject *str = NULL;
-    PyObject *encoded = NULL;
-    const char *raw;
+static int _encode_PyDecimal(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* is_finite;
+    PyObject* str = NULL;
+    PyObject* encoded = NULL;
+    const char* raw;
     Py_ssize_t len;
 
     // Decimal class has no public C API
@@ -392,9 +407,9 @@ bail:
 
 /******************************************************************************/
 
-static int _encode_PyUnicode(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyObject *str;
-    const char *raw;
+static int _encode_PyUnicode(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* str;
+    const char* raw;
     Py_ssize_t len;
 
     BAIL_ON_NULL(str = PyUnicode_AsEncodedString(obj, "utf-8", NULL));
@@ -407,6 +422,7 @@ static int _encode_PyUnicode(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
         WRITE_CHAR_OR_BAIL(TYPE_STRING);
         BAIL_ON_NONZERO(_encode_longlong(len, buffer));
     }
+
     WRITE_OR_BAIL(raw, len);
     Py_DECREF(str);
     return 0;
@@ -418,7 +434,7 @@ bail:
 
 /******************************************************************************/
 
-static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
+static int _encode_PyFloat(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
     char numtmp[9]; // holds type char + float32/64
     double abs;
     double num = PyFloat_AsDouble(obj);
@@ -430,6 +446,7 @@ static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
 #ifndef USE__BJDATA
 
 #ifdef USE__FPCLASS
+
     switch (_fpclass(num)) {
         case _FPCLASS_SNAN:
         case _FPCLASS_QNAN:
@@ -443,6 +460,7 @@ static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
             WRITE_CHAR_OR_BAIL(TYPE_NULL);
             return 0;
 #ifdef USE__FPCLASS
+
         case _FPCLASS_NZ:
         case _FPCLASS_PZ:
 #else
@@ -453,6 +471,7 @@ static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
             WRITE_OR_BAIL(numtmp, 5);
             return 0;
 #ifdef USE__FPCLASS
+
         case _FPCLASS_ND:
         case _FPCLASS_PD:
 #else
@@ -467,12 +486,15 @@ static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
 
 
 #ifdef USE__FPCLASS
+
     switch (_fpclass(num)) {
 #else
+
     switch (fpclassify(num)) {
 #endif
 
 #ifdef USE__FPCLASS
+
         case _FPCLASS_NZ:
         case _FPCLASS_PZ:
 #else
@@ -483,6 +505,7 @@ static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
             WRITE_OR_BAIL(numtmp, 5);
             return 0;
 #ifdef USE__FPCLASS
+
         case _FPCLASS_ND:
         case _FPCLASS_PD:
 #else
@@ -495,6 +518,7 @@ static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
 #endif
 
     abs = fabs(num);
+
     if (!buffer->prefs.no_float32 && 1.18e-38 <= abs && 3.4e38 >= abs) {
         BAIL_ON_NONZERO(_pyfuncs_ubj_PyFloat_Pack4(num, (unsigned char*)&numtmp[1], buffer->prefs.islittle));
         numtmp[0] = TYPE_FLOAT32;
@@ -504,6 +528,7 @@ static int _encode_PyFloat(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
         numtmp[0] = TYPE_FLOAT64;
         WRITE_OR_BAIL(numtmp, 9);
     }
+
     return 0;
 
 bail:
@@ -513,68 +538,69 @@ bail:
 /******************************************************************************/
 
 #define WRITE_TYPE_AND_INT8_OR_BAIL(c1, c2) {\
-    numtmp[0] = c1;\
-    numtmp[1] = (char)c2;\
-    WRITE_OR_BAIL(numtmp, 2);\
-}
+        numtmp[0] = c1;\
+        numtmp[1] = (char)c2;\
+        WRITE_OR_BAIL(numtmp, 2);\
+    }
 #define WRITE_INT_INTO_NUMTMP(num, size) {\
-    /* numtmp also stores type, so need one larger*/\
-    if(!islittle){\
-        unsigned char i = size + 1;\
-        do {\
-            numtmp[--i] = (char)num;\
-            num >>= 8;\
-        } while (i > 1);\
-    }else{\
-        unsigned char i = 1;\
-        do {\
-            numtmp[i++] = (char)num;\
-            num >>= 8;\
-        } while (i < size + 1);\
-    }\
-}
+        /* numtmp also stores type, so need one larger*/\
+        if(!islittle){\
+            unsigned char i = size + 1;\
+            do {\
+                numtmp[--i] = (char)num;\
+                num >>= 8;\
+            } while (i > 1);\
+        }else{\
+            unsigned char i = 1;\
+            do {\
+                numtmp[i++] = (char)num;\
+                num >>= 8;\
+            } while (i < size + 1);\
+        }\
+    }
 #define WRITE_INT16_OR_BAIL(num) {\
-    WRITE_INT_INTO_NUMTMP(num, 2);\
-    numtmp[0] = TYPE_INT16;\
-    WRITE_OR_BAIL(numtmp, 3);\
-}
+        WRITE_INT_INTO_NUMTMP(num, 2);\
+        numtmp[0] = TYPE_INT16;\
+        WRITE_OR_BAIL(numtmp, 3);\
+    }
 #define WRITE_INT32_OR_BAIL(num) {\
-    WRITE_INT_INTO_NUMTMP(num, 4);\
-    numtmp[0] = TYPE_INT32;\
-    WRITE_OR_BAIL(numtmp, 5);\
-}
+        WRITE_INT_INTO_NUMTMP(num, 4);\
+        numtmp[0] = TYPE_INT32;\
+        WRITE_OR_BAIL(numtmp, 5);\
+    }
 #define WRITE_INT64_OR_BAIL(num) {\
-    WRITE_INT_INTO_NUMTMP(num, 8);\
-    numtmp[0] = TYPE_INT64;\
-    WRITE_OR_BAIL(numtmp, 9);\
-}
+        WRITE_INT_INTO_NUMTMP(num, 8);\
+        numtmp[0] = TYPE_INT64;\
+        WRITE_OR_BAIL(numtmp, 9);\
+    }
 
 #ifdef USE__BJDATA
 
 #define WRITE_UINT16_OR_BAIL(num) {\
-    WRITE_INT_INTO_NUMTMP(num, 2);\
-    numtmp[0] = TYPE_UINT16;\
-    WRITE_OR_BAIL(numtmp, 3);\
-}
+        WRITE_INT_INTO_NUMTMP(num, 2);\
+        numtmp[0] = TYPE_UINT16;\
+        WRITE_OR_BAIL(numtmp, 3);\
+    }
 #define WRITE_UINT32_OR_BAIL(num) {\
-    WRITE_INT_INTO_NUMTMP(num, 4);\
-    numtmp[0] = TYPE_UINT32;\
-    WRITE_OR_BAIL(numtmp, 5);\
-}
+        WRITE_INT_INTO_NUMTMP(num, 4);\
+        numtmp[0] = TYPE_UINT32;\
+        WRITE_OR_BAIL(numtmp, 5);\
+    }
 #define WRITE_UINT64_OR_BAIL(num) {\
-    WRITE_INT_INTO_NUMTMP(num, 8);\
-    numtmp[0] = TYPE_UINT64;\
-    WRITE_OR_BAIL(numtmp, 9);\
-}
+        WRITE_INT_INTO_NUMTMP(num, 8);\
+        numtmp[0] = TYPE_UINT64;\
+        WRITE_OR_BAIL(numtmp, 9);\
+    }
 
 #endif
 
 
-static int _encode_longlong(long long num, _bjdata_encoder_buffer_t *buffer) {
+static int _encode_longlong(long long num, _bjdata_encoder_buffer_t* buffer) {
     char numtmp[9]; // large enough to hold type + maximum integer (INT64)
-    int islittle=(buffer->prefs.islittle);
+    int islittle = (buffer->prefs.islittle);
 
 #ifdef USE__BJDATA
+
     if (num >= 0) {
         if (num < POWER_TWO(8)) {
             WRITE_TYPE_AND_INT8_OR_BAIL(TYPE_UINT8, num);
@@ -585,7 +611,9 @@ static int _encode_longlong(long long num, _bjdata_encoder_buffer_t *buffer) {
         } else {
             WRITE_UINT64_OR_BAIL(num);
         }
+
 #else
+
     if (num >= 0) {
         if (num < POWER_TWO(8)) {
             WRITE_TYPE_AND_INT8_OR_BAIL(TYPE_UINT8, num);
@@ -596,6 +624,7 @@ static int _encode_longlong(long long num, _bjdata_encoder_buffer_t *buffer) {
         } else {
             WRITE_INT64_OR_BAIL(num);
         }
+
 #endif
     } else if (num >= -(POWER_TWO(7))) {
         WRITE_TYPE_AND_INT8_OR_BAIL(TYPE_INT8, num);
@@ -606,26 +635,29 @@ static int _encode_longlong(long long num, _bjdata_encoder_buffer_t *buffer) {
     } else {
         WRITE_INT64_OR_BAIL(num);
     }
+
     return 0;
 
 bail:
     return 1;
 }
 
-static int _encode_PyLong(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
+static int _encode_PyLong(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
     int overflow;
     long long num = PyLong_AsLongLongAndOverflow(obj, &overflow);
 
     if (overflow) {
         char numtmp[9]; // large enough to hold type + maximum integer (INT64)
         unsigned long long unum = PyLong_AsUnsignedLongLong(obj);
-        int islittle=(buffer->prefs.islittle);
-        if(PyErr_Occurred()){
-	    PyErr_Clear();
+        int islittle = (buffer->prefs.islittle);
+
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
             BAIL_ON_NONZERO(_encode_PyObject_as_PyDecimal(obj, buffer));
-	}else{
-	    WRITE_UINT64_OR_BAIL(unum);
-	}
+        } else {
+            WRITE_UINT64_OR_BAIL(unum);
+        }
+
         return 0;
     } else if (num == -1 && PyErr_Occurred()) {
         // unexpected as PyLong should fit if not overflowing
@@ -639,7 +671,7 @@ bail:
 }
 
 #if PY_MAJOR_VERSION < 3
-static int _encode_PyInt(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
+static int _encode_PyInt(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
     long num = PyInt_AsLong(obj);
 
     if (num == -1 && PyErr_Occurred()) {
@@ -653,27 +685,31 @@ static int _encode_PyInt(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
 
 /******************************************************************************/
 
-static int _encode_PySequence(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyObject *ident;        // id of sequence (for checking circular reference)
-    PyObject *seq = NULL;   // converted sequence (via PySequence_Fast)
+static int _encode_PySequence(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* ident;        // id of sequence (for checking circular reference)
+    PyObject* seq = NULL;   // converted sequence (via PySequence_Fast)
     Py_ssize_t len;
     Py_ssize_t i;
     int seen;
 
     // circular reference check
     BAIL_ON_NULL(ident = PyLong_FromVoidPtr(obj));
+
     if ((seen = PySet_Contains(buffer->markers, ident))) {
         if (-1 != seen) {
             PyErr_SetString(PyExc_ValueError, "Circular reference detected");
         }
+
         goto bail;
     }
+
     BAIL_ON_NONZERO(PySet_Add(buffer->markers, ident));
 
     BAIL_ON_NULL(seq = PySequence_Fast(obj, "_encode_PySequence expects sequence"));
     len = PySequence_Fast_GET_SIZE(seq);
 
     WRITE_CHAR_OR_BAIL(ARRAY_START);
+
     if (buffer->prefs.container_count) {
         WRITE_CHAR_OR_BAIL(CONTAINER_COUNT);
         BAIL_ON_NONZERO(_encode_longlong(len, buffer));
@@ -690,6 +726,7 @@ static int _encode_PySequence(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
     if (-1 == PySet_Discard(buffer->markers, ident)) {
         goto bail;
     }
+
     Py_DECREF(ident);
     Py_DECREF(seq);
     return 0;
@@ -702,18 +739,20 @@ bail:
 
 /******************************************************************************/
 
-static int _encode_mapping_key(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyObject *str = NULL;
-    const char *raw;
+static int _encode_mapping_key(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* str = NULL;
+    const char* raw;
     Py_ssize_t len;
 
     if (PyUnicode_Check(obj)) {
         BAIL_ON_NULL(str = PyUnicode_AsEncodedString(obj, "utf-8", NULL));
     }
+
 #if PY_MAJOR_VERSION < 3
     else if (PyString_Check(obj)) {
         BAIL_ON_NULL(str = PyString_AsEncodedObject(obj, "utf-8", NULL));
     }
+
 #endif
     else {
         PyErr_SetString(EncoderException, "Mapping keys can only be strings");
@@ -732,44 +771,52 @@ bail:
     return 1;
 }
 
-static int _encode_PyMapping(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyObject *ident; // id of sequence (for checking circular reference)
-    PyObject *items = NULL;
-    PyObject *iter = NULL;
-    PyObject *item = NULL;
+static int _encode_PyMapping(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* ident; // id of sequence (for checking circular reference)
+    PyObject* items = NULL;
+    PyObject* iter = NULL;
+    PyObject* item = NULL;
     int seen;
 
     // circular reference check
     BAIL_ON_NULL(ident = PyLong_FromVoidPtr(obj));
+
     if ((seen = PySet_Contains(buffer->markers, ident))) {
         if (-1 != seen) {
             PyErr_SetString(PyExc_ValueError, "Circular reference detected");
         }
+
         goto bail;
     }
+
     BAIL_ON_NONZERO(PySet_Add(buffer->markers, ident));
 
     BAIL_ON_NULL(items = PyMapping_Items(obj));
+
     if (buffer->prefs.sort_keys) {
         BAIL_ON_NONZERO(PyList_Sort(items));
     }
 
     WRITE_CHAR_OR_BAIL(OBJECT_START);
+
     if (buffer->prefs.container_count) {
         WRITE_CHAR_OR_BAIL(CONTAINER_COUNT);
         _encode_longlong(PyList_GET_SIZE(items), buffer);
     }
 
     BAIL_ON_NULL(iter = PyObject_GetIter(items));
+
     while (NULL != (item = PyIter_Next(iter))) {
         if (!PyTuple_Check(item) || 2 != PyTuple_GET_SIZE(item)) {
             PyErr_SetString(PyExc_ValueError, "items must return 2-tuples");
             goto bail;
         }
+
         BAIL_ON_NONZERO(_encode_mapping_key(PyTuple_GET_ITEM(item, 0), buffer));
         BAIL_ON_NONZERO(_bjdata_encode_value(PyTuple_GET_ITEM(item, 1), buffer));
         Py_CLEAR(item);
     }
+
     // for PyIter_Next
     if (PyErr_Occurred()) {
         goto bail;
@@ -782,6 +829,7 @@ static int _encode_PyMapping(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
     if (-1 == PySet_Discard(buffer->markers, ident)) {
         goto bail;
     }
+
     Py_DECREF(iter);
     Py_DECREF(items);
     Py_DECREF(ident);
@@ -797,8 +845,8 @@ bail:
 
 /******************************************************************************/
 
-int _bjdata_encode_value(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
-    PyObject *newobj = NULL; // result of default call (when encoding unsupported types)
+int _bjdata_encode_value(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* newobj = NULL; // result of default call (when encoding unsupported types)
 
     if (Py_None == obj) {
         WRITE_CHAR_OR_BAIL(TYPE_NULL);
@@ -809,7 +857,7 @@ int _bjdata_encode_value(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
     } else if (PyUnicode_Check(obj)) {
         BAIL_ON_NONZERO(_encode_PyUnicode(obj, buffer));
 #if PY_MAJOR_VERSION < 3
-    } else if (PyInt_Check(obj) && Py_TYPE(obj)!=NULL && strstr(Py_TYPE(obj)->tp_name, "numpy")==NULL) {
+    } else if (PyInt_Check(obj) && Py_TYPE(obj) != NULL && strstr(Py_TYPE(obj)->tp_name, "numpy") == NULL) {
         BAIL_ON_NONZERO(_encode_PyInt(obj, buffer));
 #endif
     } else if (PyLong_Check(obj)) {
@@ -830,13 +878,14 @@ int _bjdata_encode_value(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
         } else {
             RECURSE_AND_BAIL_ON_NONZERO(_encode_PySequence(obj, buffer), " while encoding an array");
         }
-    // order important since Mapping could also be Sequence
+
+        // order important since Mapping could also be Sequence
     } else if (PyMapping_Check(obj)
-    // Unfortunately PyMapping_Check is no longer enough, see https://bugs.python.org/issue5945
+               // Unfortunately PyMapping_Check is no longer enough, see https://bugs.python.org/issue5945
 #if PY_MAJOR_VERSION >= 3
                && PyObject_HasAttrString(obj, "items")
 #endif
-    ) {
+              ) {
         RECURSE_AND_BAIL_ON_NONZERO(_encode_PyMapping(obj, buffer), " while encoding an object");
     } else if (NULL == obj) {
         PyErr_SetString(PyExc_RuntimeError, "Internal error - _bjdata_encode_value got NULL obj");
@@ -849,6 +898,7 @@ int _bjdata_encode_value(PyObject *obj, _bjdata_encoder_buffer_t *buffer) {
         PyErr_Format(EncoderException, "Cannot encode item of type %s", obj->ob_type->tp_name);
         goto bail;
     }
+
     return 0;
 
 bail:
@@ -857,8 +907,8 @@ bail:
 }
 
 int _bjdata_encoder_init(void) {
-    PyObject *tmp_module = NULL;
-    PyObject *tmp_obj = NULL;
+    PyObject* tmp_module = NULL;
+    PyObject* tmp_obj = NULL;
 
     // try to determine floating point format / endianess
     _pyfuncs_ubj_detect_formats();
@@ -870,10 +920,12 @@ int _bjdata_encoder_init(void) {
 
     BAIL_ON_NULL(tmp_module = PyImport_ImportModule("decimal"));
     BAIL_ON_NULL(tmp_obj = PyObject_GetAttrString(tmp_module, "Decimal"));
+
     if (!PyType_Check(tmp_obj)) {
         PyErr_SetString(PyExc_ImportError, "decimal.Decimal type import failure");
         goto bail;
     }
+
     PyDec_Type = (PyTypeObject*) tmp_obj;
     Py_CLEAR(tmp_module);
 
