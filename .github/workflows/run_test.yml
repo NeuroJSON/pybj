@@ -3,7 +3,7 @@ name: Test BJData
 on: [push]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
@@ -40,9 +40,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-22.04
-    needs: build
-    permissions:
-      id-token: write
+    needs: test
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
