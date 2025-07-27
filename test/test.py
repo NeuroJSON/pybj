@@ -968,8 +968,16 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
             recursion_exceptions = (RuntimeError,)
 
         try:
+            # Adjust multiplier based on Python version for recursion limit changes
+            if version_info >= (3, 13):
+                multiplier = 10
+            elif version_info >= (3, 12):
+                multiplier = 6
+            else:
+                multiplier = 2
+
             obj = current = []
-            for _ in range(getrecursionlimit() * 2):
+            for _ in range(getrecursionlimit() * multiplier):
                 new_list = []
                 current.append(new_list)
                 current = new_list
@@ -977,7 +985,7 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
             with self.assert_raises_regex(recursion_exceptions, "recursion"):
                 self.bjddumpb(obj)
 
-            raw = ARRAY_START * (getrecursionlimit() * 2)
+            raw = ARRAY_START * (getrecursionlimit() * multiplier)
             with self.assert_raises_regex(recursion_exceptions, "recursion"):
                 self.bjdloadb(raw)
         finally:
