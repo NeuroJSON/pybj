@@ -11,7 +11,7 @@
 - BJData Spec Version: [V1 Draft 3](https://neurojson.org/bjdata/draft3)
 - Acknowledgement: This project is supported by US National Institute of Health (NIH) grant U24-NS124027
 
-[![Build Status](https://travis-ci.com/NeuroJSON/pybj.svg?branch=master)](https://travis-ci.com/NeuroJSON/pybj)
+![Build Status](https://github.com/NeuroJSON/pybj/actions/workflows/run_test.yml/badge.svg)
 
 This is a Python v3.2+ (and 2.7+) [Binary JData](https://neurojson.org) encoder
 and decoder based on the [Draft-3](Binary_JData_Specification.md) specification.
