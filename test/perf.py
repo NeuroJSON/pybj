@@ -34,7 +34,6 @@ from json import (
 
 
 class LibWrapper(object):
-
     __metaclass__ = ABCMeta
 
     @staticmethod

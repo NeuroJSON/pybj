@@ -946,7 +946,9 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
                     self.bjdloadb(pack(fmt, i))
                 except DecoderException:
                     pass
-                except Exception as ex:  # pragma: no cover  pylint: disable=broad-except
+                except (
+                    Exception
+                ) as ex:  # pragma: no cover  pylint: disable=broad-except
                     self.fail("Unexpected failure: %s" % ex)
 
     def assert_raises_regex(self, *args, **kwargs):
@@ -958,18 +960,25 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
     def test_recursion(self):
         old_limit = getrecursionlimit()
         setrecursionlimit(200)
+        if version_info >= (3, 5):
+            # Python 3.5+ has RecursionError
+            recursion_exceptions = (RuntimeError, RecursionError)
+        else:
+            # Python 2.7 and early Python 3.x only have RuntimeError
+            recursion_exceptions = (RuntimeError,)
+
         try:
             obj = current = []
-            # Increase the multiplier for Python 3.12+
-            multiplier = 4 if version_info >= (3, 12) else 2
-            for _ in range(getrecursionlimit() * multiplier):
+            for _ in range(getrecursionlimit() * 2):
                 new_list = []
                 current.append(new_list)
                 current = new_list
-            with self.assert_raises_regex(RuntimeError, "recursion"):
+
+            with self.assert_raises_regex(recursion_exceptions, "recursion"):
                 self.bjddumpb(obj)
-            raw = ARRAY_START * (getrecursionlimit() * multiplier)
-            with self.assert_raises_regex(RuntimeError, "recursion"):
+
+            raw = ARRAY_START * (getrecursionlimit() * 2)
+            with self.assert_raises_regex(recursion_exceptions, "recursion"):
                 self.bjdloadb(raw)
         finally:
             setrecursionlimit(old_limit)
