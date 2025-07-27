@@ -969,10 +969,8 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
 
         try:
             # Adjust multiplier based on Python version for recursion limit changes
-            if version_info >= (3, 13):
-                multiplier = 10
-            elif version_info >= (3, 12):
-                multiplier = 6
+            if version_info >= (3, 12):
+                multiplier = 200
             else:
                 multiplier = 2
 
