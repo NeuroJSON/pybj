@@ -39,9 +39,10 @@ jobs:
           ./coverage_test.sh
 
   deploy:
-    name: Upload bjdata wheels
     runs-on: ubuntu-22.04
     needs: build
+    permissions:
+      id-token: write
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
