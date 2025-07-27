@@ -2,19 +2,19 @@
 
 # Binary JData for Python - a lightweight binary JSON format
 
-- Copyright: (C) Qianqian Fang (2020-2023) <q.fang at neu.edu>
+- Copyright: (C) Qianqian Fang (2020-2025) <q.fang at neu.edu>
 - Copyright: (C) Iotic Labs Ltd. (2016-2019) <vilnis.termanis at iotic-labs.com>
 - License: Apache License, Version 2.0
-- Version: 0.4.1
+- Version: 0.5.0
 - URL: https://pypi.org/project/bjdata/
 - Github: https://github.com/NeuroJSON/pybj
-- BJData Spec Version: [V1 Draft 2](https://neurojson.org/bjdata/draft2)
+- BJData Spec Version: [V1 Draft 3](https://neurojson.org/bjdata/draft3)
 - Acknowledgement: This project is supported by US National Institute of Health (NIH) grant U24-NS124027
 
 [![Build Status](https://travis-ci.com/NeuroJSON/pybj.svg?branch=master)](https://travis-ci.com/NeuroJSON/pybj)
 
 This is a Python v3.2+ (and 2.7+) [Binary JData](https://neurojson.org) encoder
-and decoder based on the [Draft-2](Binary_JData_Specification.md) specification.
+and decoder based on the [Draft-3](Binary_JData_Specification.md) specification.
 
 ## Installing / packaging
 ```shell
@@ -137,11 +137,11 @@ This package was modified based on the py-ubjson package developed by
 Project URL: https://github.com/Iotic-Labs/py-ubjson
 
 The major changes were focused on supporting the Binary JData Specification 
-[Draft 2](https://neurojson.org/bjdata/draft2) -
+[Draft 3](https://neurojson.org/bjdata/draft3) -
 an extended Universal Binary JSON (UBJSON) Specification Draft-12 by adding
 the below new features:
 
-* BJData adds 4 new numeric data types: `uint16 [u]`, `uint32 [m]`, `uint64 [M]` and `float16 [h]`
+* BJData adds 5 new data types: `uint16 [u]`, `uint32 [m]`, `uint64 [M]`, `float16 [h]`, and `byte [B]`
 * BJData adds a dedicated byte data type used in optimized array containers for binary data
 * BJData supports an optimized ND array container
 * BJData does not convert NaN/Inf/-Inf to `null`

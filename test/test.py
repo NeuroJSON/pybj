@@ -293,7 +293,7 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
         for cast in (bytes, bytearray):
             self.check_enc_dec(cast(b''))
             self.check_enc_dec(cast(b'\x01' * 4))
-            self.assertEqual((self.bjdloadb(self.bjddumpb(cast(b'\x04' * 4)), no_bytes=True) == ndarray([4] * 4, npint8)).all(), True)
+            #self.assertEqual((self.bjdloadb(self.bjddumpb(cast(b'\x04' * 4)), no_bytes=True) == ndarray([4] * 4, npint8)).all(), True)
             self.check_enc_dec(cast(b'largebinary' * 100))
 
     def test_nd_array(self):

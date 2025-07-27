@@ -30,9 +30,9 @@ typedef struct {
     PyObject *object_pairs_hook;
     // don't convert BYTE arrays to bytes instances (and keep as an array of individual integers)
     int no_bytes;
-    int uint8_bytes;
     int intern_object_keys;
     int islittle;
+    int uint8_bytes;
 } _bjdata_decoder_prefs_t;
 
 typedef struct _bjdata_decoder_buffer_t {
