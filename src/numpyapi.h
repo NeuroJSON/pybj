@@ -19,7 +19,6 @@
 
 #define PY_ARRAY_UNIQUE_SYMBOL bjdata_numpy_array
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
-#define NPY_TARGET_VERSION NPY_2_0_API_VERSION
 #include <numpy/arrayobject.h>
 
 #if defined (__cplusplus)
