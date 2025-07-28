@@ -45,7 +45,7 @@ def load_description(filename):
 
 
 user_site = getusersitepackages()
-user_numpy_include = os.path.join(user_site, "numpy", "core", "include")
+user_numpy_include = os.path.join(user_site, "numpy", "_core", "include")
 
 
 # Loosely based on https://github.com/mongodb/mongo-python-driver/blob/master/setup.py
