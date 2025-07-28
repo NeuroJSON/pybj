@@ -11,9 +11,9 @@ rm -rf coverage/{c,python}
 
 # Coverage should be measured with extension compiled for both Python 2 & 3 (e.g. via separate venv)
 export CFLAGS="-coverage"
-python setup.py build_ext -i
-python -mcoverage run --branch --omit=bjdata/compat.py -m unittest discover test/ -vf
-python -mcoverage html -d coverage/python
+python3 setup.py build_ext -i
+python3 -mcoverage run --branch --omit=bjdata/compat.py -m unittest discover test/ -vf
+python3 -mcoverage html -d coverage/python
 lcov --capture --directory . --output-file /tmp/bjdata-coverage.info.pre
 # Only consider own source files. (Unfortunately extract/remove commands seem incapable of reading from stdin)
 lcov --extract /tmp/bjdata-coverage.info.pre "$(pwd)/src/*" --output-file /tmp/bjdata-coverage.info.pre2

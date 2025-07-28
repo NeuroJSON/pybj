@@ -20,7 +20,8 @@ import os
 import warnings
 from glob import glob
 from platform import python_implementation
-import numpy
+from site import getusersitepackages
+from numpy import get_include as numpy_get_include
 
 # Allow for environments without setuptools
 try:
@@ -41,6 +42,10 @@ def load_description(filename):
     script_dir = os.path.abspath(os.path.dirname(__file__))
     with open(os.path.join(script_dir, filename), "r") as infile:
         return infile.read()
+
+
+user_site = getusersitepackages()
+user_numpy_include = os.path.join(user_site, "numpy", "core", "include")
 
 
 # Loosely based on https://github.com/mongodb/mongo-python-driver/blob/master/setup.py
@@ -73,14 +78,14 @@ BUILD_EXTENSIONS = (
     "PYBJDATA_NO_EXTENSION" not in os.environ and python_implementation() != "PyPy"
 )
 
-COMPILE_ARGS = ["-std=c99", "-DUSE__BJDATA"]
+COMPILE_ARGS = ["-std=c99", "-DUSE__BJDATA", "-v"]
 # For testing/debug only - some of these are GCC-specific
 # COMPILE_ARGS += ['-Wall', '-Wextra', '-Wundef', '-Wshadow', '-Wcast-align', '-Wcast-qual', '-Wstrict-prototypes',
 #                  '-pedantic']
 
 setup(
     name="bjdata",
-    version="0.5.2",
+    version="0.5.3",
     description="Binary JData and UBJSON encoder/decoder",
     long_description=load_description("README.md"),
     long_description_content_type="text/markdown",
@@ -99,7 +104,7 @@ setup(
             Extension(
                 "_bjdata",
                 sorted(glob("src/*.c")),
-                include_dirs=[numpy.get_include()],
+                include_dirs=[user_numpy_include, numpy_get_include()],
                 extra_compile_args=COMPILE_ARGS,
                 # undef_macros=['NDEBUG']
             )
