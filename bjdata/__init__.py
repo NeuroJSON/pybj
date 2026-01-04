@@ -14,7 +14,7 @@
 # limitations under the License.
 
 
-"""BJData (Draft 3) and UBJSON (Draft 12) implementation
+"""BJData (Draft 4) and UBJSON (Draft 12) implementation
 
 Example usage:
 
@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover
 from .encoder import EncoderException
 from .decoder import DecoderException
 
-__version__ = "0.5.4"
+__version__ = "0.6.0"
 
 __all__ = (
     "EXTENSION_ENABLED",
