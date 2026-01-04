@@ -14,7 +14,7 @@
 # limitations under the License.
 
 
-"""BJData (Draft 2) and UBJSON encoder"""
+"""BJData (Draft 4) and UBJSON decoder with SOA support"""
 
 from io import BytesIO
 from struct import Struct, pack, error as StructError
@@ -55,6 +55,8 @@ from numpy import (
     dtype as npdtype,
     frombuffer as buffer2numpy,
     half as halfprec,
+    zeros as npzeros,
+    empty as npempty,
 )
 from array import array as typedarray
 
@@ -162,6 +164,24 @@ __DTYPELEN_MAP = {
     TYPE_FLOAT32: 4,
     TYPE_FLOAT64: 8,
     TYPE_CHAR: 1,
+}
+
+# Numpy dtype strings for SOA
+__NUMPY_DTYPE_MAP = {
+    TYPE_BYTE: "u1",
+    TYPE_INT8: "i1",
+    TYPE_UINT8: "u1",
+    TYPE_INT16: "i2",
+    TYPE_UINT16: "u2",
+    TYPE_INT32: "i4",
+    TYPE_UINT32: "u4",
+    TYPE_INT64: "i8",
+    TYPE_UINT64: "u8",
+    TYPE_FLOAT16: "f2",
+    TYPE_FLOAT32: "f4",
+    TYPE_FLOAT64: "f8",
+    TYPE_BOOL_TRUE: "?",
+    TYPE_BOOL_FALSE: "?",
 }
 
 
@@ -358,6 +378,106 @@ def prodlist(mylist):
     return result
 
 
+def __decode_soa_schema(fp_read, intern_object_keys, le):
+    """Decode SOA schema: {field1:type1, field2:type2, ...}"""
+    schema = []
+    marker = fp_read(1)
+
+    while marker != OBJECT_END:
+        if marker == TYPE_NOOP:
+            marker = fp_read(1)
+            continue
+
+        # Decode field name
+        field_name = __decode_object_key(fp_read, marker, intern_object_keys, le)
+
+        # Decode field type marker
+        type_marker = fp_read(1)
+        if type_marker not in __TYPES_FIXLEN and type_marker not in (
+            TYPE_BOOL_TRUE,
+            TYPE_BOOL_FALSE,
+        ):
+            raise DecoderException("SOA schema only supports fixed-length types")
+
+        schema.append((field_name, type_marker))
+        marker = fp_read(1)
+
+    return schema
+
+
+def __decode_soa(fp_read, schema, is_row_major, intern_object_keys, le):
+    """Decode SOA payload into numpy structured array"""
+    # Read count (can be scalar or ND dimensions)
+    marker = fp_read(1)
+    if marker != CONTAINER_COUNT:
+        raise DecoderException("Expected # after SOA schema")
+
+    marker = fp_read(1)
+    if marker == ARRAY_START:
+        # ND dimensions
+        dims = []
+        marker = fp_read(1)
+        while marker != ARRAY_END:
+            if marker in __TYPES_INT:
+                dims.append(__METHOD_MAP[marker](fp_read, marker, le))
+            marker = fp_read(1)
+        count = prodlist(dims)
+    else:
+        # Scalar count
+        count = __decode_int_non_negative(fp_read, marker, le)
+        dims = [count]
+
+    # Build numpy dtype for structured array
+    dtype_list = []
+    for field_name, type_marker in schema:
+        if type_marker in (TYPE_BOOL_TRUE, TYPE_BOOL_FALSE):
+            dtype_list.append((field_name, "?"))
+        else:
+            dtype_list.append((field_name, __NUMPY_DTYPE_MAP[type_marker]))
+
+    struct_dtype = npdtype(dtype_list)
+    result = npempty(count, dtype=struct_dtype)
+
+    if is_row_major:
+        # Row-major: interleaved - read one record at a time
+        for i in range(count):
+            for field_name, type_marker in schema:
+                if type_marker in (TYPE_BOOL_TRUE, TYPE_BOOL_FALSE):
+                    # Boolean: read T or F byte
+                    bool_byte = fp_read(1)
+                    result[field_name][i] = bool_byte == TYPE_BOOL_TRUE
+                else:
+                    # Numeric: read raw bytes
+                    nbytes = __DTYPELEN_MAP[type_marker]
+                    raw = fp_read(nbytes)
+                    value = buffer2numpy(
+                        raw, dtype=npdtype(__NUMPY_DTYPE_MAP[type_marker])
+                    )[0]
+                    result[field_name][i] = value
+    else:
+        # Column-major: all values of field1, then field2, etc.
+        for field_name, type_marker in schema:
+            if type_marker in (TYPE_BOOL_TRUE, TYPE_BOOL_FALSE):
+                # Boolean: read T/F bytes
+                bool_bytes = fp_read(count)
+                for i in range(count):
+                    result[field_name][i] = bool_bytes[i : i + 1] == TYPE_BOOL_TRUE
+            else:
+                # Numeric: read all values at once
+                nbytes = __DTYPELEN_MAP[type_marker]
+                raw = fp_read(count * nbytes)
+                values = buffer2numpy(
+                    raw, dtype=npdtype(__NUMPY_DTYPE_MAP[type_marker])
+                )
+                result[field_name] = values
+
+    # Reshape if ND
+    if len(dims) > 1:
+        result = result.reshape(dims)
+
+    return result
+
+
 def __get_container_params(
     fp_read,
     in_mapping,
@@ -372,6 +492,13 @@ def __get_container_params(
     dims = []
     if marker == CONTAINER_TYPE:
         marker = fp_read(1)
+
+        # Check for SOA: ${ indicates schema object
+        if marker == OBJECT_START:
+            # This is SOA format - decode schema
+            schema = __decode_soa_schema(fp_read, intern_object_keys, islittle)
+            return marker, True, -1, schema, [], True  # -1 count signals SOA
+
         if marker not in __TYPES:
             raise DecoderException("Invalid container type")
         type_ = marker
@@ -413,7 +540,7 @@ def __get_container_params(
         counting = False
     else:
         raise DecoderException("Container type without count")
-    return marker, counting, count, type_, dims
+    return marker, counting, count, type_, dims, False
 
 
 def __decode_object(
@@ -425,7 +552,7 @@ def __decode_object(
     intern_object_keys,
     islittle,
 ):
-    marker, counting, count, type_, dims = __get_container_params(
+    result = __get_container_params(
         fp_read,
         True,
         no_bytes,
@@ -435,6 +562,13 @@ def __decode_object(
         intern_object_keys,
         islittle,
     )
+
+    # Check if this is SOA format
+    if len(result) == 6 and result[5]:  # is_soa flag
+        schema = result[3]
+        return __decode_soa(fp_read, schema, False, intern_object_keys, islittle)
+
+    marker, counting, count, type_, dims, _ = result
     has_pairs_hook = object_pairs_hook is not None
     obj = [] if has_pairs_hook else {}
 
@@ -524,7 +658,7 @@ def __decode_array(
     intern_object_keys,
     islittle,
 ):
-    marker, counting, count, type_, dims = __get_container_params(
+    result = __get_container_params(
         fp_read,
         False,
         no_bytes,
@@ -534,6 +668,13 @@ def __decode_array(
         intern_object_keys,
         islittle,
     )
+
+    # Check if this is SOA format (row-major)
+    if len(result) == 6 and result[5]:  # is_soa flag
+        schema = result[3]
+        return __decode_soa(fp_read, schema, True, intern_object_keys, islittle)
+
+    marker, counting, count, type_, dims, _ = result
 
     # special case - no data (None or bool)
     if type_ in __TYPES_NO_DATA:
@@ -566,7 +707,7 @@ def __decode_array(
             container = buffer2numpy(container, dtype=npdtype(__DTYPE_MAP[type_]))
         return container
 
-    container = []
+    container = list()
     while count > 0 and (counting or marker != ARRAY_END):
         if marker == TYPE_NOOP:
             marker = fp_read(1)
@@ -645,7 +786,7 @@ def load(
                          any other array (i.e. result in a list).
         uint8_bytes (bool): If set, typed UBJSON arrays (uint8) will be
                          converted to a bytes instance instead of being
-                         treated as an array (for UBJSON & BJData Draft 2).
+                         treated as an array (for UBJSON & BJData Draft 4).
                          Ignored if no_bytes is set.
         object_hook (callable): Called with the result of any object literal
                                 decoded (instead of dict).
@@ -659,7 +800,7 @@ def load(
                                    in Python2 (since interning does not apply
                                    to unicode) and wil be ignored.
         islittle (1 or 0): default is 1 for little-endian for all numerics (for
-                            BJData Draft 2), change to 0 to use big-endian
+                            BJData Draft 4), change to 0 to use big-endian
                             (for UBJSON & BJData Draft 1)
 
     Returns:
@@ -697,6 +838,9 @@ def load(
         +----------------------------------+---------------+
         | null                             | None          |
         +----------------------------------+---------------+
+
+    SOA (Structure of Arrays) format is automatically detected and decoded
+    to numpy structured arrays (record arrays).
     """
     if object_pairs_hook is None and object_hook is None:
         object_hook = __object_hook_noop

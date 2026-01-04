@@ -78,7 +78,7 @@ BUILD_EXTENSIONS = (
     "PYBJDATA_NO_EXTENSION" not in os.environ and python_implementation() != "PyPy"
 )
 
-COMPILE_ARGS = ["-std=c99", "-DUSE__BJDATA", "-v"]
+COMPILE_ARGS = ["-std=c99", "-DUSE__BJDATA"]
 # For testing/debug only - some of these are GCC-specific
 # COMPILE_ARGS += ['-Wall', '-Wextra', '-Wundef', '-Wshadow', '-Wcast-align', '-Wcast-qual', '-Wstrict-prototypes',
 #                  '-pedantic']

@@ -43,6 +43,17 @@ extern "C" {
         goto bail;\
     }
 
+/******************************************************************************/
+
+/* SOA (Structure of Arrays) format options */
+enum {
+    SOA_FORMAT_NONE = 0,     /* No SOA encoding (default) */
+    SOA_FORMAT_COLUMN = 1,   /* Column-major (columnar) SOA */
+    SOA_FORMAT_ROW = 2       /* Row-major (interleaved) SOA */
+};
+
+/******************************************************************************/
+
 #if defined (__cplusplus)
 }
 #endif

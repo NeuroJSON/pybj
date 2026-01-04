@@ -14,7 +14,7 @@
 # limitations under the License.
 
 
-"""BJData (Draft 2) and UBJSON encoder"""
+"""BJData (Draft 4) and UBJSON encoder with SOA support"""
 
 from struct import pack, Struct
 from decimal import Decimal
@@ -89,6 +89,23 @@ __DTYPE_TO_MARKER = {
     "f8": TYPE_FLOAT64,
     "b1": TYPE_INT8,
     "S1": TYPE_CHAR,
+}
+
+# For SOA encoding
+__NUMPY_DTYPE_TO_MARKER = {
+    "i1": TYPE_INT8,
+    "i2": TYPE_INT16,
+    "i4": TYPE_INT32,
+    "i8": TYPE_INT64,
+    "u1": TYPE_UINT8,
+    "u2": TYPE_UINT16,
+    "u4": TYPE_UINT32,
+    "u8": TYPE_UINT64,
+    "f2": TYPE_FLOAT16,
+    "f4": TYPE_FLOAT32,
+    "f8": TYPE_FLOAT64,
+    "b1": TYPE_BOOL_TRUE,  # Boolean uses T marker in schema
+    "?": TYPE_BOOL_TRUE,  # Boolean
 }
 
 # Prefix applicable to specialised byte array container
@@ -195,6 +212,120 @@ def __encode_bytes(fp_write, item, uint8_bytes, le=1):
     # no ARRAY_END since length was specified
 
 
+def __get_numpy_dtype_marker(dtype_str):
+    """Get BJData type marker from numpy dtype string"""
+    # Handle endianness prefix
+    if len(dtype_str) >= 2 and dtype_str[0] in "<>|":
+        dtype_str = dtype_str[1:]
+
+    if dtype_str in __NUMPY_DTYPE_TO_MARKER:
+        return __NUMPY_DTYPE_TO_MARKER[dtype_str]
+
+    # Handle boolean
+    if dtype_str.startswith("b") or dtype_str == "?":
+        return TYPE_BOOL_TRUE
+
+    return None
+
+
+def __can_encode_as_soa(item):
+    """Check if numpy structured array can be encoded as SOA"""
+    try:
+        import numpy as np
+    except ImportError:
+        return False
+
+    if not isinstance(item, np.ndarray):
+        return False
+
+    # Must be structured array with named fields
+    if item.dtype.names is None:
+        return False
+
+    # All fields must be scalar fixed-length types
+    for name in item.dtype.names:
+        field_dtype = item.dtype.fields[name][0]
+        # Check if it's a simple scalar type (not nested array or object)
+        if field_dtype.shape != ():
+            return False
+        marker = __get_numpy_dtype_marker(field_dtype.str)
+        if marker is None:
+            return False
+
+    return True
+
+
+def __encode_soa(fp_write, item, soa_format, le):
+    """Encode numpy structured array as SOA format"""
+    import numpy as np
+
+    is_row_major = soa_format in ("row", "r")
+    count = item.size
+    dims = item.shape
+
+    # Flatten for iteration
+    flat_item = item.flatten()
+
+    # Build schema
+    schema = []
+    for name in item.dtype.names:
+        field_dtype = item.dtype.fields[name][0]
+        marker = __get_numpy_dtype_marker(field_dtype.str)
+        schema.append((name, marker, field_dtype))
+
+    # Write header: [$ or {$ + schema + # + count
+    if is_row_major:
+        fp_write(ARRAY_START)
+    else:
+        fp_write(OBJECT_START)
+
+    fp_write(CONTAINER_TYPE)
+
+    # Write schema object
+    fp_write(OBJECT_START)
+    for name, marker, _ in schema:
+        # Write field name
+        encoded_name = name.encode("utf-8")
+        __encode_int(fp_write, len(encoded_name), le)
+        fp_write(encoded_name)
+        # Write type marker
+        fp_write(marker)
+    fp_write(OBJECT_END)
+
+    # Write count
+    fp_write(CONTAINER_COUNT)
+    if len(dims) > 1:
+        # ND dimensions
+        fp_write(ARRAY_START)
+        for d in dims:
+            __encode_int(fp_write, d, le)
+        fp_write(ARRAY_END)
+    else:
+        __encode_int(fp_write, count, le)
+
+    # Write payload
+    if is_row_major:
+        # Interleaved: for each record, write all fields
+        for i in range(count):
+            for name, marker, field_dtype in schema:
+                value = flat_item[name][i]
+                if marker == TYPE_BOOL_TRUE:
+                    fp_write(TYPE_BOOL_TRUE if value else TYPE_BOOL_FALSE)
+                else:
+                    # Write raw bytes
+                    fp_write(value.tobytes())
+    else:
+        # Columnar: for each field, write all values
+        for name, marker, field_dtype in schema:
+            if marker == TYPE_BOOL_TRUE:
+                # Boolean: write T/F for each value
+                for i in range(count):
+                    fp_write(TYPE_BOOL_TRUE if flat_item[name][i] else TYPE_BOOL_FALSE)
+            else:
+                # Numeric: write all values as contiguous bytes
+                fp_write(flat_item[name].tobytes())
+
+
 def __encode_value(
     fp_write,
     item,
@@ -205,6 +336,7 @@ def __encode_value(
     uint8_bytes,
     islittle,
     default,
+    soa_format,
 ):
     le = islittle
 
@@ -247,6 +379,7 @@ def __encode_value(
             uint8_bytes,
             islittle,
             default,
+            soa_format,
         )
 
     elif isinstance(item, Sequence):
@@ -260,6 +393,7 @@ def __encode_value(
             uint8_bytes,
             islittle,
             default,
+            soa_format,
         )
 
     elif default is not None:
@@ -273,10 +407,18 @@ def __encode_value(
             uint8_bytes,
             islittle,
             default,
+            soa_format,
         )
 
     elif type(item).__module__ == "numpy":
-        __encode_numpy(fp_write, item, uint8_bytes, islittle, default)
+        # Check for SOA-compatible structured array
+        if soa_format and __can_encode_as_soa(item):
+            __encode_soa(fp_write, item, soa_format, le)
+        elif soa_format is None and __can_encode_as_soa(item):
+            # Auto-enable column-major SOA for structured arrays
+            __encode_soa(fp_write, item, "col", le)
+        else:
+            __encode_numpy(fp_write, item, uint8_bytes, islittle, default)
 
     else:
         raise EncoderException("Cannot encode item of type %s" % type(item))
@@ -292,6 +434,7 @@ def __encode_array(
     uint8_bytes,
     islittle,
     default,
+    soa_format,
 ):
     # circular reference check
     container_id = id(item)
@@ -315,6 +458,7 @@ def __encode_array(
             uint8_bytes,
             islittle,
             default,
+            soa_format,
         )
 
     if not container_count:
@@ -333,6 +477,7 @@ def __encode_object(
     uint8_bytes,
     islittle,
     default,
+    soa_format,
 ):
     le = islittle
     # circular reference check
@@ -368,6 +513,7 @@ def __encode_object(
             uint8_bytes,
             islittle,
             default,
+            soa_format,
         )
 
     if not container_count:
@@ -437,6 +583,7 @@ def dump(
     uint8_bytes=False,
     islittle=True,
     default=None,
+    soa_format=None,
 ):
     """Writes the given object as BJData/UBJSON to the provided file-like object
 
@@ -455,14 +602,18 @@ def dump(
                            loss of precision.
         uint8_bytes (bool): If set, typed UBJSON arrays (uint8) will be
                          converted to a bytes instance instead of being
-                         treated as an array (for UBJSON & BJData Draft 2).
+                         treated as an array (for UBJSON & BJData Draft 4).
                          Ignored if no_bytes is set.
         islittle (1 or 0): default is 1 for little-endian for all numerics (for
-                            BJData Draft 2), change to 0 to use big-endian
+                            BJData Draft 4), change to 0 to use big-endian
                             (for UBJSON for BJData Draft 1)
         default (callable): Called for objects which cannot be serialised.
                             Should return a UBJSON-encodable version of the
                             object or raise an EncoderException.
+        soa_format (str): SOA format for numpy structured arrays:
+                         'col' or 'column' - column-major (columnar)
+                         'row' - row-major (interleaved)
+                         None - auto-enable column-major for structured arrays
 
     Raises:
         EncoderException: If an encoding failure occured.
@@ -511,6 +662,16 @@ def dump(
         float32: 1.18e-38 <= abs(value) <= 3.4e38 or value == 0
         float64: 2.23e-308 <= abs(value) < 1.8e308
         For other values Decimal is used.
+
+    SOA Encoding:
+        When soa_format is set and the object is a numpy structured array
+        (record array), it will be encoded using the BJData Draft 4 SOA format.
+
+        Example:
+            import numpy as np
+            dt = np.dtype([('x', 'u1'), ('y', 'f4'), ('flag', '?')])
+            data = np.array([(65, 1.5, True), (66, 2.5, False)], dtype=dt)
+            bjd = dumpb(data, soa_format='col')
     """
     if not callable(fp.write):
         raise TypeError("fp.write not callable")
@@ -526,6 +687,7 @@ def dump(
         uint8_bytes,
         islittle,
         default,
+        soa_format,
     )
 
 
@@ -537,6 +699,7 @@ def dumpb(
     uint8_bytes=False,
     islittle=True,
     default=None,
+    soa_format=None,
 ):
     """Returns the given object as BJData/UBJSON in a bytes instance. See dump() for
     available arguments."""
@@ -550,5 +713,6 @@ def dumpb(
             uint8_bytes=uint8_bytes,
             islittle=islittle,
             default=default,
+            soa_format=soa_format,
         )
         return fp.getvalue()

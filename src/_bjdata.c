@@ -16,6 +16,7 @@
  */
 
 #include <Python.h>
+#include <string.h>
 
 #include "common.h"
 #include "encoder.h"
@@ -24,11 +25,28 @@
 
 /******************************************************************************/
 
-// container_count, sort_keys, no_float32, islittle, uint8_bytes
-static _bjdata_encoder_prefs_t _bjdata_encoder_prefs_defaults = { NULL, 0, 0, 1, 1, 0 };
+// container_count, sort_keys, no_float32, islittle, uint8_bytes, soa_format
+static _bjdata_encoder_prefs_t _bjdata_encoder_prefs_defaults = { NULL, 0, 0, 1, 1, 0, SOA_FORMAT_NONE };
 
 // no_bytes, object_pairs_hook, islittle, uint8_bytes
 static _bjdata_decoder_prefs_t _bjdata_decoder_prefs_defaults = { NULL, NULL, 0, 0, 1, 0 };
+
+/******************************************************************************/
+
+/* Parse soa_format string parameter and convert to enum */
+static int _parse_soa_format(const char* soa_str) {
+    if (soa_str == NULL) {
+        return SOA_FORMAT_NONE;
+    }
+
+    if (strcmp(soa_str, "col") == 0 || strcmp(soa_str, "column") == 0) {
+        return SOA_FORMAT_COLUMN;
+    } else if (strcmp(soa_str, "row") == 0 || strcmp(soa_str, "r") == 0) {
+        return SOA_FORMAT_ROW;
+    }
+
+    return SOA_FORMAT_NONE;
+}
 
 /******************************************************************************/
 
@@ -36,20 +54,23 @@ PyDoc_STRVAR(_bjdata_dump__doc__, "See pure Python version (encoder.dump) for do
 #define FUNC_DEF_DUMP {"dump", (PyCFunction)_bjdata_dump, METH_VARARGS | METH_KEYWORDS, _bjdata_dump__doc__}
 static PyObject*
 _bjdata_dump(PyObject* self, PyObject* args, PyObject* kwargs) {
-    static const char* format = "OO|iiiiiO:dump";
-    static char* keywords[] = {"obj", "fp", "container_count", "sort_keys", "no_float32", "islittle", "uint8_bytes", "default", NULL};
+    static const char* format = "OO|iiiiiOz:dump";
+    static char* keywords[] = {"obj", "fp", "container_count", "sort_keys", "no_float32", "islittle", "uint8_bytes", "default", "soa_format", NULL};
 
     _bjdata_encoder_buffer_t* buffer = NULL;
     _bjdata_encoder_prefs_t prefs = _bjdata_encoder_prefs_defaults;
     PyObject* obj;
     PyObject* fp;
     PyObject* fp_write = NULL;
+    char* soa_format_str = NULL;
     UNUSED(self);
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, format, keywords, &obj, &fp, &prefs.container_count,
-                                     &prefs.sort_keys, &prefs.no_float32, &prefs.islittle, &prefs.uint8_bytes, &prefs.default_func)) {
+                                     &prefs.sort_keys, &prefs.no_float32, &prefs.islittle, &prefs.uint8_bytes, &prefs.default_func, &soa_format_str)) {
         goto bail;
     }
+
+    prefs.soa_format = _parse_soa_format(soa_format_str);
 
     BAIL_ON_NULL(fp_write = PyObject_GetAttrString(fp, "write"));
     BAIL_ON_NULL(buffer = _bjdata_encoder_buffer_create(&prefs, fp_write));
@@ -71,18 +92,21 @@ PyDoc_STRVAR(_bjdata_dumpb__doc__, "See pure Python version (encoder.dumpb) for 
 #define FUNC_DEF_DUMPB {"dumpb", (PyCFunction)_bjdata_dumpb, METH_VARARGS | METH_KEYWORDS, _bjdata_dumpb__doc__}
 static PyObject*
 _bjdata_dumpb(PyObject* self, PyObject* args, PyObject* kwargs) {
-    static const char* format = "O|iiiiiO:dumpb";
-    static char* keywords[] = {"obj", "container_count", "sort_keys", "no_float32", "islittle", "uint8_bytes", "default", NULL};
+    static const char* format = "O|iiiiiOz:dumpb";
+    static char* keywords[] = {"obj", "container_count", "sort_keys", "no_float32", "islittle", "uint8_bytes", "default", "soa_format", NULL};
 
     _bjdata_encoder_buffer_t* buffer = NULL;
     _bjdata_encoder_prefs_t prefs = _bjdata_encoder_prefs_defaults;
     PyObject* obj;
+    char* soa_format_str = NULL;
     UNUSED(self);
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, format, keywords, &obj, &prefs.container_count, &prefs.sort_keys,
-                                     &prefs.no_float32, &prefs.islittle, &prefs.uint8_bytes, &prefs.default_func)) {
+                                     &prefs.no_float32, &prefs.islittle, &prefs.uint8_bytes, &prefs.default_func, &soa_format_str)) {
         goto bail;
     }
+
+    prefs.soa_format = _parse_soa_format(soa_format_str);
 
     BAIL_ON_NULL(buffer = _bjdata_encoder_buffer_create(&prefs, NULL));
     BAIL_ON_NONZERO(_bjdata_encode_value(obj, buffer));

@@ -80,6 +80,8 @@ static int _encode_longlong(long long num, _bjdata_encoder_buffer_t* buffer);
 static int _encode_PySequence(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 static int _encode_mapping_key(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 static int _encode_PyMapping(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_NDarray(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
+static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int is_row_major);
 
 const int numpytypes[][2] = {
     {NPY_BOOL,       TYPE_UINT8},
@@ -290,11 +292,388 @@ static int _lookup_marker(npy_intp numpytypeid) {
     return -1;
 }
 
+/* Get BJData type marker for numpy dtype */
+static int _get_soa_type_marker(int dtype_num) {
+    if (dtype_num == NPY_BOOL) {
+        return TYPE_BOOL_TRUE;
+    } else if (dtype_num == NPY_INT8 || dtype_num == NPY_BYTE) {
+        return TYPE_INT8;
+    } else if (dtype_num == NPY_UINT8 || dtype_num == NPY_UBYTE) {
+        return TYPE_UINT8;
+    } else if (dtype_num == NPY_INT16 || dtype_num == NPY_SHORT) {
+        return TYPE_INT16;
+    } else if (dtype_num == NPY_UINT16 || dtype_num == NPY_USHORT) {
+        return TYPE_UINT16;
+    } else if (dtype_num == NPY_INT32 || dtype_num == NPY_INT) {
+        return TYPE_INT32;
+    } else if (dtype_num == NPY_UINT32 || dtype_num == NPY_UINT) {
+        return TYPE_UINT32;
+    } else if (dtype_num == NPY_INT64 || dtype_num == NPY_LONGLONG) {
+        return TYPE_INT64;
+    } else if (dtype_num == NPY_UINT64 || dtype_num == NPY_ULONGLONG) {
+        return TYPE_UINT64;
+    } else if (dtype_num == NPY_FLOAT16 || dtype_num == NPY_HALF) {
+        return TYPE_FLOAT16;
+    } else if (dtype_num == NPY_FLOAT32 || dtype_num == NPY_FLOAT) {
+        return TYPE_FLOAT32;
+    } else if (dtype_num == NPY_FLOAT64 || dtype_num == NPY_DOUBLE) {
+        return TYPE_FLOAT64;
+    } else {
+        return -1;
+    }
+}
+
+/* Get item size for a numpy type */
+static int _get_type_itemsize(int type_num) {
+    if (type_num == NPY_BOOL || type_num == NPY_INT8 || type_num == NPY_BYTE ||
+            type_num == NPY_UINT8 || type_num == NPY_UBYTE) {
+        return 1;
+    } else if (type_num == NPY_INT16 || type_num == NPY_SHORT ||
+               type_num == NPY_UINT16 || type_num == NPY_USHORT ||
+               type_num == NPY_FLOAT16 || type_num == NPY_HALF) {
+        return 2;
+    } else if (type_num == NPY_INT32 || type_num == NPY_INT ||
+               type_num == NPY_UINT32 || type_num == NPY_UINT ||
+               type_num == NPY_FLOAT32 || type_num == NPY_FLOAT) {
+        return 4;
+    } else if (type_num == NPY_INT64 || type_num == NPY_LONGLONG ||
+               type_num == NPY_UINT64 || type_num == NPY_ULONGLONG ||
+               type_num == NPY_FLOAT64 || type_num == NPY_DOUBLE) {
+        return 8;
+    } else {
+        return -1;
+    }
+}
+
+/* Check if numpy array is a structured array suitable for SOA encoding */
+static int _can_encode_as_soa(PyArrayObject* arr) {
+    PyArray_Descr* dtype = PyArray_DESCR(arr);
+    PyObject* names;
+    Py_ssize_t i, num_fields;
+
+    /* Must have named fields (structured array) */
+    names = PyObject_GetAttrString((PyObject*)dtype, "names");
+
+    if (!names || names == Py_None || !PyTuple_Check(names)) {
+        PyErr_Clear();
+        Py_XDECREF(names);
+        return 0;
+    }
+
+    num_fields = PyTuple_GET_SIZE(names);
+
+    if (num_fields == 0) {
+        Py_DECREF(names);
+        return 0;
+    }
+
+    /* Check each field has a supported scalar type */
+    PyObject* fields_dict = PyObject_GetAttrString((PyObject*)dtype, "fields");
+
+    if (!fields_dict) {
+        PyErr_Clear();
+        Py_DECREF(names);
+        return 0;
+    }
+
+    /* Clear any errors from GetAttrString - fields_dict could be dict or mappingproxy */
+    PyErr_Clear();
+
+    for (i = 0; i < num_fields; i++) {
+        PyObject* name = PyTuple_GET_ITEM(names, i);
+        PyObject* field_info = PyObject_GetItem(fields_dict, name);
+
+        if (!field_info || !PyTuple_Check(field_info) || PyTuple_GET_SIZE(field_info) < 1) {
+            Py_XDECREF(field_info);
+            Py_DECREF(fields_dict);
+            Py_DECREF(names);
+            return 0;
+        }
+
+        PyArray_Descr* field_dtype = (PyArray_Descr*)PyTuple_GET_ITEM(field_info, 0);
+
+        if (!PyArray_DescrCheck(field_dtype)) {
+            Py_DECREF(field_info);
+            Py_DECREF(fields_dict);
+            Py_DECREF(names);
+            return 0;
+        }
+
+        /* Check if field dtype is a simple scalar */
+        PyObject* field_shape = PyObject_GetAttrString((PyObject*)field_dtype, "shape");
+
+        if (field_shape && PyTuple_Check(field_shape) && PyTuple_GET_SIZE(field_shape) > 0) {
+            Py_DECREF(field_shape);
+            Py_DECREF(field_info);
+            Py_DECREF(fields_dict);
+            Py_DECREF(names);
+            return 0;
+        }
+
+        Py_XDECREF(field_shape);
+        PyErr_Clear();  /* Clear any error from GetAttrString */
+
+        /* Check if we have a marker for this type */
+        int type_num = field_dtype->type_num;
+
+        if (_get_soa_type_marker(type_num) < 0) {
+            Py_DECREF(field_info);
+            Py_DECREF(fields_dict);
+            Py_DECREF(names);
+            return 0;
+        }
+
+        Py_DECREF(field_info);
+    }
+
+    Py_DECREF(fields_dict);
+    Py_DECREF(names);
+    return 1;
+}
+
+/* Encode numpy structured array as SOA format */
+static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int is_row_major) {
+    PyArray_Descr* dtype = PyArray_DESCR(arr);
+    PyObject* names = NULL;
+    PyObject* fields_dict = NULL;
+    PyArrayObject* flat_arr = NULL;
+    Py_ssize_t i, j, num_fields;
+    npy_intp count;
+    int ndim;
+    npy_intp* dims;
+
+    names = PyObject_GetAttrString((PyObject*)dtype, "names");
+
+    if (!names || !PyTuple_Check(names)) {
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_ValueError, "Array dtype has no named fields");
+        }
+
+        goto bail;
+    }
+
+    num_fields = PyTuple_GET_SIZE(names);
+
+    fields_dict = PyObject_GetAttrString((PyObject*)dtype, "fields");
+
+    if (!fields_dict || !PyMapping_Check(fields_dict)) {
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_ValueError, "Failed to get fields dictionary");
+        }
+
+        goto bail;
+    }
+
+    ndim = PyArray_NDIM(arr);
+    dims = PyArray_DIMS(arr);
+    count = PyArray_SIZE(arr);
+
+    /* Flatten the array for easier iteration */
+    flat_arr = (PyArrayObject*)PyArray_Flatten(arr, NPY_CORDER);
+
+    if (!flat_arr) {
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_ValueError, "Failed to flatten array");
+        }
+
+        goto bail;
+    }
+
+    /* Write container start */
+    if (is_row_major) {
+        WRITE_CHAR_OR_BAIL(ARRAY_START);
+    } else {
+        WRITE_CHAR_OR_BAIL(OBJECT_START);
+    }
+
+    WRITE_CHAR_OR_BAIL(CONTAINER_TYPE);
+
+    /* Write schema object */
+    WRITE_CHAR_OR_BAIL(OBJECT_START);
+
+    for (i = 0; i < num_fields; i++) {
+        PyObject* name = PyTuple_GET_ITEM(names, i);
+        PyObject* field_info = PyObject_GetItem(fields_dict, name);
+
+        if (!field_info) {
+            goto bail;
+        }
+
+        PyArray_Descr* field_dtype = (PyArray_Descr*)PyTuple_GET_ITEM(field_info, 0);
+
+        /* Write field name */
+        PyObject* name_bytes = PyUnicode_AsEncodedString(name, "utf-8", NULL);
+
+        if (!name_bytes) {
+            Py_DECREF(field_info);
+            goto bail;
+        }
+
+        Py_ssize_t name_len = PyBytes_GET_SIZE(name_bytes);
+        BAIL_ON_NONZERO(_encode_longlong(name_len, buffer));
+        WRITE_OR_BAIL(PyBytes_AS_STRING(name_bytes), name_len);
+        Py_DECREF(name_bytes);
+
+        /* Write type marker */
+        int marker = _get_soa_type_marker(field_dtype->type_num);
+        WRITE_CHAR_OR_BAIL((char)marker);
+
+        Py_DECREF(field_info);
+    }
+
+    WRITE_CHAR_OR_BAIL(OBJECT_END);
+
+    /* Write count */
+    WRITE_CHAR_OR_BAIL(CONTAINER_COUNT);
+
+    if (ndim > 1) {
+        /* ND dimensions */
+        WRITE_CHAR_OR_BAIL(ARRAY_START);
+
+        for (i = 0; i < ndim; i++) {
+            BAIL_ON_NONZERO(_encode_longlong(dims[i], buffer));
+        }
+
+        WRITE_CHAR_OR_BAIL(ARRAY_END);
+    } else {
+        BAIL_ON_NONZERO(_encode_longlong(count, buffer));
+    }
+
+    /* Write payload */
+    if (is_row_major) {
+        /* Row-major (interleaved): for each record, write all fields */
+        for (j = 0; j < count; j++) {
+            void* record_ptr = PyArray_GETPTR1(flat_arr, j);
+
+            for (i = 0; i < num_fields; i++) {
+                PyObject* name = PyTuple_GET_ITEM(names, i);
+                PyObject* field_info = PyObject_GetItem(fields_dict, name);
+
+                if (!field_info) {
+                    goto bail;
+                }
+
+                PyArray_Descr* field_dtype = (PyArray_Descr*)PyTuple_GET_ITEM(field_info, 0);
+                PyObject* offset_obj = PyTuple_GET_ITEM(field_info, 1);
+                Py_ssize_t offset = PyLong_AsSsize_t(offset_obj);
+
+                if (offset == -1 && PyErr_Occurred()) {
+                    Py_DECREF(field_info);
+                    goto bail;
+                }
+
+                char* field_ptr = (char*)record_ptr + offset;
+                int type_num = field_dtype->type_num;
+                int itemsize = _get_type_itemsize(type_num);
+
+                if (itemsize < 0) {
+                    PyErr_Format(PyExc_ValueError, "Unsupported field type: %d", type_num);
+                    Py_DECREF(field_info);
+                    goto bail;
+                }
+
+                if (type_num == NPY_BOOL) {
+                    npy_bool val = *((npy_bool*)field_ptr);
+                    WRITE_CHAR_OR_BAIL(val ? TYPE_BOOL_TRUE : TYPE_BOOL_FALSE);
+                } else {
+                    WRITE_OR_BAIL(field_ptr, itemsize);
+                }
+
+                Py_DECREF(field_info);
+            }
+        }
+    } else {
+        /* Column-major (columnar): for each field, write all values */
+        for (i = 0; i < num_fields; i++) {
+            PyObject* name = PyTuple_GET_ITEM(names, i);
+            PyObject* field_info = PyObject_GetItem(fields_dict, name);
+
+            if (!field_info) {
+                goto bail;
+            }
+
+            PyArray_Descr* field_dtype = (PyArray_Descr*)PyTuple_GET_ITEM(field_info, 0);
+            PyObject* offset_obj = PyTuple_GET_ITEM(field_info, 1);
+            Py_ssize_t offset = PyLong_AsSsize_t(offset_obj);
+
+            if (offset == -1 && PyErr_Occurred()) {
+                Py_DECREF(field_info);
+                goto bail;
+            }
+
+            int type_num = field_dtype->type_num;
+            int itemsize = _get_type_itemsize(type_num);
+
+            if (itemsize < 0) {
+                PyErr_Format(PyExc_ValueError, "Unsupported field type: %d", type_num);
+                Py_DECREF(field_info);
+                goto bail;
+            }
+
+            if (type_num == NPY_BOOL) {
+                /* Boolean: write T/F for each value */
+                for (j = 0; j < count; j++) {
+                    void* record_ptr = PyArray_GETPTR1(flat_arr, j);
+                    npy_bool val = *((npy_bool*)((char*)record_ptr + offset));
+                    WRITE_CHAR_OR_BAIL(val ? TYPE_BOOL_TRUE : TYPE_BOOL_FALSE);
+                }
+            } else {
+                /* Numeric: write raw bytes for each value */
+                for (j = 0; j < count; j++) {
+                    void* record_ptr = PyArray_GETPTR1(flat_arr, j);
+                    char* field_ptr = (char*)record_ptr + offset;
+                    WRITE_OR_BAIL(field_ptr, itemsize);
+                }
+            }
+
+            Py_DECREF(field_info);
+        }
+    }
+
+    Py_XDECREF(names);
+    Py_XDECREF(fields_dict);
+    Py_XDECREF((PyObject*)flat_arr);
+    return 0;
+
+bail:
+
+    if (!PyErr_Occurred()) {
+        PyErr_SetString(PyExc_RuntimeError, "SOA encoding failed");
+    }
+
+    Py_XDECREF(names);
+    Py_XDECREF(fields_dict);
+    Py_XDECREF((PyObject*)flat_arr);
+    return 1;
+}
+
 static int _encode_NDarray(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
     PyArrayObject* arr;
     Py_INCREF(obj);
     arr = (PyArrayObject*)PyArray_EnsureArray(obj);
-    BAIL_ON_NONZERO(arr == NULL);
+
+    if (arr == NULL) {
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_RuntimeError, "PyArray_EnsureArray failed");
+        }
+
+        return 1;
+    }
+
+    /* Check for SOA encoding */
+    if (buffer->prefs.soa_format != SOA_FORMAT_NONE && _can_encode_as_soa(arr)) {
+        int is_row_major = (buffer->prefs.soa_format == SOA_FORMAT_ROW);
+        int result = _encode_soa(arr, buffer, is_row_major);
+        Py_DECREF(arr);
+        return result;
+    }
+
+    /* Auto-enable column-major SOA for structured arrays when soa_format is NONE */
+    if (buffer->prefs.soa_format == SOA_FORMAT_NONE && _can_encode_as_soa(arr)) {
+        int result = _encode_soa(arr, buffer, 0);  /* 0 = column-major */
+        Py_DECREF(arr);
+        return result;
+    }
 
     int ndim = PyArray_NDIM(arr);
     int type = PyArray_TYPE(arr);
@@ -302,7 +681,14 @@ static int _encode_NDarray(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
 
     int marker = _lookup_marker(type);
 
-    BAIL_ON_NONZERO(marker < 0)
+    if (marker < 0) {
+        if (!PyErr_Occurred()) {
+            PyErr_Format(PyExc_ValueError, "Unsupported array type: %d", type);
+        }
+
+        Py_DECREF(arr);
+        return 1;
+    }
 
     if (ndim == 0) { /*scalar*/
         WRITE_CHAR_OR_BAIL((char)marker);
@@ -349,6 +735,12 @@ static int _encode_NDarray(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
     return 0;
 
 bail:
+
+    if (!PyErr_Occurred()) {
+        PyErr_SetString(PyExc_RuntimeError, "NDarray encoding failed");
+    }
+
+    Py_DECREF(arr);
     return 1;
 }
 
