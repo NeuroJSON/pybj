@@ -31,11 +31,10 @@
 /* NumPy 1.x/2.x compatibility macros */
 /******************************************************************************/
 
-#ifndef PyDataType_ELSIZE
-    #define PyDataType_ELSIZE(d) ((d)->elsize)
-#endif
+#include <numpy/npy_common.h>
 
-#ifndef PyDataType_TYPE_NUM
+#if NPY_ABI_VERSION < 0x02000000
+    #define PyDataType_ELSIZE(d) ((d)->elsize)
     #define PyDataType_TYPE_NUM(d) ((d)->type_num)
 #endif
 
