@@ -42,7 +42,6 @@
                 (str = PyUnicode_FromString(msg)) &&\
                 (tuple = PyTuple_Pack(2, str, num))) {\
             PyErr_SetObject(DecoderException, tuple);\
-            /* backup method in case object creation fails */\
         } else {\
             PyErr_Format(DecoderException, "%s (at byte [%zd])", msg, buffer->total_read);\
         }\
@@ -52,7 +51,6 @@
         goto bail;\
     }
 
-// used only by READ macros below
 #define ACTION_READ_ERROR(stmt, len, item_str) {\
         if (NULL == (stmt)) {\
             if (read > 0) {\
@@ -93,21 +91,17 @@
         if (NULL == ((dst_obj) = PyUnicode_FromStringAndSize(raw, length))) {\
             RAISE_DECODER_EXCEPTION(("Failed to decode utf8: " item_str));\
         }\
-    }\
+    }
 
 #define DECODE_LENGTH_OR_BAIL(length) BAIL_ON_NEGATIVE((length) = _decode_int_non_negative(buffer, NULL))
 
 #define DECODE_LENGTH_OR_BAIL_MARKER(length, marker) \
     BAIL_ON_NEGATIVE((length) = _decode_int_non_negative(buffer, &(marker)))
 
-
-// decoder buffer size when using fp (i.e. minimum number of bytes to read in one go)
+// decoder buffer size when using fp
 #define BUFFER_FP_SIZE 256
-// io.SEEK_CUR constant (for seek() function)
+// io.SEEK_CUR constant
 #define IO_SEEK_CUR 1
-
-#define SOA_MAX_FIELDS 256
-
 
 static PyObject* DecoderException = NULL;
 static PyTypeObject* PyDec_Type = NULL;
@@ -116,28 +110,21 @@ static PyTypeObject* PyDec_Type = NULL;
 /******************************************************************************/
 
 typedef struct {
-    // next marker after container parameters
-    char marker;
-    // indicates whether countainer has count specified
-    int counting;
-    // number of elements in container (if counting or 1 if not)
-    long long count;
-    // type of container values, if typed, otherwise TYPE_NONE
-    char type;
-    // indicates the parameter specification for the container is invalid (an exception will have been set)
-    int invalid;
-    // indicates this is an SOA format container
-    int is_soa;
-    // SOA schema (if is_soa is true)
+    char marker;      // next marker after container parameters
+    int counting;     // indicates whether container has count specified
+    long long count;  // number of elements in container
+    char type;        // type of container values, if typed, otherwise TYPE_NONE
+    int invalid;      // indicates the parameter specification is invalid
+    int is_soa;       // indicates this is an SOA format container
     _soa_schema_t* soa_schema;
 } _container_params_t;
 
+/* Buffer read functions */
 static const char* _decoder_buffer_read_fixed(_bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer);
 static const char* _decoder_buffer_read_callable(_bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer);
 static const char* _decoder_buffer_read_buffered(_bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer);
 
-//These functions return NULL on failure (an exception will have been set). Note that no type checking is performed!
-
+/* Decode functions */
 static PyObject* _decode_int8(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_int16_32(_bjdata_decoder_buffer_t* buffer, Py_ssize_t size);
 static PyObject* _decode_uint16_32(_bjdata_decoder_buffer_t* buffer, Py_ssize_t size);
@@ -150,18 +137,13 @@ static long long _decode_int_non_negative(_bjdata_decoder_buffer_t* buffer, char
 static PyObject* _decode_char(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_string(_bjdata_decoder_buffer_t* buffer);
 static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffer, int in_mapping, unsigned int* ndim, long long** dims);
-static int _is_no_data_type(char type);
-static int _is_fixed_len_type(char type);
-static int _get_type_info(char type, int* bytelen);
-// Note: Does NOT reserve a new reference
-static PyObject* _no_data_type(char type);
 static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_object_with_pairs_hook(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_object(_bjdata_decoder_buffer_t* buffer);
 
 /* SOA support functions */
 static void _free_soa_schema(_soa_schema_t* schema);
-static int _soa_get_type_info(char type, int* dtype_num, Py_ssize_t* itemsize);
+static int _get_type_info(char type, int* bytelen);
 static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_schema_t* schema, int is_row_major);
 static int _decode_soa_field_type(_bjdata_decoder_buffer_t* buffer, _soa_field_t* f);
 static _soa_schema_t* _decode_soa_schema(_bjdata_decoder_buffer_t* buffer);
@@ -197,12 +179,10 @@ _bjdata_decoder_buffer_t* _bjdata_decoder_buffer_create(_bjdata_decoder_prefs_t*
             Py_INCREF(seek);
         }
     } else {
-        // Should have been checked a level above
         PyErr_SetString(PyExc_TypeError, "Input neither support buffer interface nor is callable");
         goto bail;
     }
 
-    // treat Py_None as no argument being supplied
     if (Py_None == buffer->prefs.object_hook) {
         buffer->prefs.object_hook = NULL;
     }
@@ -230,9 +210,8 @@ int _bjdata_decoder_buffer_free(_bjdata_decoder_buffer_t** buffer) {
 
                 // preserve the previous exception, if set
                 PyErr_Fetch(&type, &value, &traceback);
-
-                seek_result = PyObject_CallFunction((*buffer)->seek, "nn", ((*buffer)->pos - (*buffer)->view.len),
-                                                    IO_SEEK_CUR);
+                seek_result = PyObject_CallFunction((*buffer)->seek, "nn",
+                                                    ((*buffer)->pos - (*buffer)->view.len), IO_SEEK_CUR);
                 Py_XDECREF(seek_result);
 
                 /* Blindly calling PyErr_Restore would clear any exception raised by seek call. If however already had
@@ -272,6 +251,7 @@ int _bjdata_decoder_buffer_free(_bjdata_decoder_buffer_t** buffer) {
  *
  * This function reads from a fixed buffer (single byte array)
  */
+
 static const char* _decoder_buffer_read_fixed(_bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer) {
     Py_ssize_t old_pos;
 
@@ -284,21 +264,17 @@ static const char* _decoder_buffer_read_fixed(_bjdata_decoder_buffer_t* buffer, 
         old_pos = buffer->total_read;
         buffer->total_read += *len;
 
-        // caller has provided own destination
         if (NULL != dst_buffer) {
             return memcpy(dst_buffer, &((char*)buffer->view.buf)[old_pos], *len);
         } else {
             return &((char*)buffer->view.buf)[old_pos];
         }
-
-        // no input remaining
     } else {
         *len = 0;
         return NULL;
     }
 }
 
-// See _decoder_buffer_read_fixed for behaviour details. This function is used to read from a stream
 static const char* _decoder_buffer_read_callable(_bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer) {
     PyObject* read_result = NULL;
 
@@ -311,14 +287,11 @@ static const char* _decoder_buffer_read_callable(_bjdata_decoder_buffer_t* buffe
         buffer->view_set = 0;
     }
 
-    // read input and get buffer view
     BAIL_ON_NULL(read_result = PyObject_CallFunction(buffer->input, "n", *len));
     BAIL_ON_NONZERO(PyObject_GetBuffer(read_result, &buffer->view, PyBUF_SIMPLE));
     buffer->view_set = 1;
-    // don't need reference since view reserves one already
     Py_CLEAR(read_result);
 
-    // no input remaining
     if (0 == buffer->view.len) {
         *len = 0;
         return NULL;
@@ -327,7 +300,6 @@ static const char* _decoder_buffer_read_callable(_bjdata_decoder_buffer_t* buffe
     *len = buffer->view.len;
     buffer->total_read += *len;
 
-    // caller has provided own destination
     if (NULL != dst_buffer) {
         return memcpy(dst_buffer, buffer->view.buf, *len);
     } else {
@@ -340,26 +312,22 @@ bail:
     return NULL;
 }
 
-// See _decoder_buffer_read_fixed for behaviour details. This function reads (buffered) from a seekable stream
 static const char* _decoder_buffer_read_buffered(_bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer) {
     Py_ssize_t old_pos;
     char* tmp_dst;
-    Py_ssize_t remaining_old = 0; // how many bytes remaining to be read (from old view)
+    Py_ssize_t remaining_old = 0;
     PyObject* read_result = NULL;
 
     if (0 == *len) {
         return NULL;
     }
 
-    // previously used temporary output no longer needed
     if (NULL != buffer->tmp_dst) {
         free(buffer->tmp_dst);
         buffer->tmp_dst = NULL;
     }
 
-    // will require additional read if remaining input smaller than requested
     if (!buffer->view_set || *len > (buffer->view.len - buffer->pos)) {
-        // create temporary buffer if not supplied (and have some remaining input in view)
         if (NULL == dst_buffer) {
             if (NULL == (tmp_dst = buffer->tmp_dst = malloc(sizeof(char) * (size_t) * len))) {
                 PyErr_NoMemory();
@@ -369,7 +337,6 @@ static const char* _decoder_buffer_read_buffered(_bjdata_decoder_buffer_t* buffe
             tmp_dst = dst_buffer;
         }
 
-        // copy remainder into buffer and release old view
         if (buffer->view_set) {
             remaining_old = buffer->view.len - buffer->pos;
 
@@ -384,34 +351,28 @@ static const char* _decoder_buffer_read_buffered(_bjdata_decoder_buffer_t* buffe
             buffer->pos = 0;
         }
 
-        // read input and get buffer view
         BAIL_ON_NULL(read_result = PyObject_CallFunction(buffer->input, "n",
                                    MAX(BUFFER_FP_SIZE, (*len - remaining_old))));
         BAIL_ON_NONZERO(PyObject_GetBuffer(read_result, &buffer->view, PyBUF_SIMPLE));
         buffer->view_set = 1;
-        // don't need reference since view reserves one already
         Py_CLEAR(read_result);
 
-        // no input remaining
         if (0 == remaining_old && buffer->view.len == 0) {
             *len = 0;
             return NULL;
         }
 
-        // read rest into buffer (adjusting total length if not all available)
         *len = MIN(*len, (buffer->view.len - buffer->pos) + remaining_old);
         buffer->pos = *len - remaining_old;
         buffer->total_read += buffer->pos;
         memcpy(&tmp_dst[remaining_old], (char*)buffer->view.buf, buffer->pos);
         return tmp_dst;
 
-        // enough data in existing view
     } else {
         old_pos = buffer->pos;
         buffer->pos += *len;
         buffer->total_read += *len;
 
-        // caller has provided own destination
         if (NULL != dst_buffer) {
             return memcpy(dst_buffer, &((char*)buffer->view.buf)[old_pos], *len);
         } else {
@@ -425,54 +386,42 @@ bail:
     return NULL;
 }
 
-
 /******************************************************************************/
 
-// These methods are partially based on Python's _struct.c
+/* Helper to create Python int from signed/unsigned byte */
+static inline PyObject* _pylong_from_byte(char value, int is_signed) {
+    long lval = is_signed ? (long)(signed char)value : (long)(unsigned char)value;
+#if PY_MAJOR_VERSION < 3
+    return PyInt_FromLong(lval);
+#else
+    return PyLong_FromLong(lval);
+#endif
+}
 
 static PyObject* _decode_byte(_bjdata_decoder_buffer_t* buffer) {
     char value;
-
     READ_CHAR_OR_BAIL(value, "byte");
-#if PY_MAJOR_VERSION < 3
-    return PyInt_FromLong((long) (unsigned char)value);
-#else
-    return PyLong_FromLong((long) (unsigned char)value);
-#endif
-
+    return _pylong_from_byte(value, 0);
 bail:
     return NULL;
 }
 
 static PyObject* _decode_int8(_bjdata_decoder_buffer_t* buffer) {
     char value;
-
     READ_CHAR_OR_BAIL(value, "int8");
-#if PY_MAJOR_VERSION < 3
-    return PyInt_FromLong((long) (signed char)value);
-#else
-    return PyLong_FromLong((long) (signed char)value);
-#endif
-
+    return _pylong_from_byte(value, 1);
 bail:
     return NULL;
 }
 
 static PyObject* _decode_uint8(_bjdata_decoder_buffer_t* buffer) {
     char value;
-
     READ_CHAR_OR_BAIL(value, "uint8");
-#if PY_MAJOR_VERSION < 3
-    return PyInt_FromLong((long) (unsigned char)value);
-#else
-    return PyLong_FromLong((long) (unsigned char)value);
-#endif
-
+    return _pylong_from_byte(value, 0);
 bail:
     return NULL;
 }
 
-// NOTE: size parameter can only be 2 or 4 (bytes)
 static PyObject* _decode_uint16_32(_bjdata_decoder_buffer_t* buffer, Py_ssize_t size) {
     const unsigned char* raw;
     unsigned long value = 0;
@@ -502,8 +451,6 @@ bail:
     return NULL;
 }
 
-
-// NOTE: size parameter can only be 2 or 4 (bytes)
 static PyObject* _decode_int16_32(_bjdata_decoder_buffer_t* buffer, Py_ssize_t size) {
     const unsigned char* raw;
     long value = 0;
@@ -560,14 +507,13 @@ static PyObject* _decode_uint64(_bjdata_decoder_buffer_t* buffer) {
 
     if (value <= ULONG_MAX) {
         return PyLong_FromUnsignedLong(Py_SAFE_DOWNCAST(value, unsigned long long, unsigned long));
-    } else {
-        return PyLong_FromUnsignedLongLong(value);
     }
+
+    return PyLong_FromUnsignedLongLong(value);
 
 bail:
     return NULL;
 }
-
 
 static PyObject* _decode_int64(_bjdata_decoder_buffer_t* buffer) {
     const unsigned char* raw;
@@ -596,15 +542,14 @@ static PyObject* _decode_int64(_bjdata_decoder_buffer_t* buffer) {
 
     if (value >= LONG_MIN && value <= LONG_MAX) {
         return PyLong_FromLong(Py_SAFE_DOWNCAST(value, long long, long));
-    } else {
-        return PyLong_FromLongLong(value);
     }
+
+    return PyLong_FromLongLong(value);
 
 bail:
     return NULL;
 }
 
-// returns negative on error (exception set)
 static long long _decode_int_non_negative(_bjdata_decoder_buffer_t* buffer, char* given_marker) {
     char marker;
     PyObject* int_obj = NULL;
@@ -664,7 +609,6 @@ static long long _decode_int_non_negative(_bjdata_decoder_buffer_t* buffer, char
     } else
 #endif
     {
-        // not expecting this to occur unless LONG_MAX (sys.maxint in Python 2) < 2^63-1
         value = PyLong_AsLongLong(int_obj);
     }
 
@@ -677,14 +621,12 @@ static long long _decode_int_non_negative(_bjdata_decoder_buffer_t* buffer, char
     }
 
     Py_XDECREF(int_obj);
-
     return value;
 
 bail:
     Py_XDECREF(int_obj);
     return -1;
 }
-
 
 static PyObject* _decode_float32(_bjdata_decoder_buffer_t* buffer) {
     const char* raw;
@@ -774,10 +716,148 @@ bail:
     return NULL;
 }
 
-/* Parse a nested struct schema and store info in field */
+/******************************************************************************/
+/* SOA Support Functions */
+/******************************************************************************/
+
+/* Check if marker is a valid integer type marker */
+static inline int _is_int_marker(char marker) {
+    return (marker == TYPE_INT8 || marker == TYPE_UINT8 ||
+            marker == TYPE_INT16 || marker == TYPE_UINT16 ||
+            marker == TYPE_INT32 || marker == TYPE_UINT32 ||
+            marker == TYPE_INT64 || marker == TYPE_UINT64 ||
+            marker == TYPE_BYTE);
+}
+
+/* Unified type info lookup */
+static int _get_type_info(char type, int* bytelen) {
+    switch (type) {
+        case TYPE_FLOAT16:
+            *bytelen = 2;
+            return PyArray_HALF;
+
+        case TYPE_FLOAT32:
+            *bytelen = 4;
+            return PyArray_FLOAT;
+
+        case TYPE_FLOAT64:
+            *bytelen = 8;
+            return PyArray_DOUBLE;
+
+        case TYPE_INT8:
+            *bytelen = 1;
+            return PyArray_BYTE;
+
+        case TYPE_UINT8:
+        case TYPE_BYTE:
+            *bytelen = 1;
+            return PyArray_UBYTE;
+
+        case TYPE_INT16:
+            *bytelen = 2;
+            return PyArray_SHORT;
+
+        case TYPE_UINT16:
+            *bytelen = 2;
+            return PyArray_USHORT;
+
+        case TYPE_INT32:
+            *bytelen = 4;
+            return PyArray_INT;
+
+        case TYPE_UINT32:
+            *bytelen = 4;
+            return PyArray_UINT;
+
+        case TYPE_INT64:
+            *bytelen = 8;
+            return PyArray_LONGLONG;
+
+        case TYPE_UINT64:
+            *bytelen = 8;
+            return PyArray_ULONGLONG;
+
+        case TYPE_CHAR:
+            *bytelen = 1;
+            return PyArray_STRING;
+
+        case TYPE_BOOL_TRUE:
+        case TYPE_BOOL_FALSE:
+            *bytelen = 1;
+            return PyArray_BOOL;
+
+        default:
+            *bytelen = 0;
+            return -1;
+    }
+}
+
+/* Free SOA field */
+static void _free_soa_field(_soa_field_t* f) {
+    if (f->name) {
+        free(f->name);
+    }
+
+    Py_XDECREF(f->str_dict);
+
+    if (f->nested_fields) {
+        for (Py_ssize_t i = 0; i < f->nested_count; i++) {
+            _free_soa_field(&f->nested_fields[i]);
+        }
+
+        free(f->nested_fields);
+    }
+}
+
+/* Free SOA schema structure */
+static void _free_soa_schema(_soa_schema_t* schema) {
+    if (schema) {
+        if (schema->fields) {
+            for (Py_ssize_t i = 0; i < schema->num_fields; i++) {
+                _free_soa_field(&schema->fields[i]);
+            }
+
+            free(schema->fields);
+        }
+
+        free(schema);
+    }
+}
+
+/* Read an index value (1/2/4 bytes) */
+static Py_ssize_t _soa_read_index(_bjdata_decoder_buffer_t* buffer, int size) {
+    const unsigned char* raw;
+    Py_ssize_t read = size, val = 0;
+
+    raw = (const unsigned char*)buffer->read_func(buffer, &read, NULL);
+
+    if (!raw || read < size) {
+        return -1;
+    }
+
+    if (buffer->prefs.islittle) {
+        for (int i = size - 1; i >= 0; i--) {
+            val = (val << 8) | raw[i];
+        }
+    } else {
+        for (int i = 0; i < size; i++) {
+            val = (val << 8) | raw[i];
+        }
+    }
+
+    return val;
+}
+
+/* Initialize an SOA field struct */
+static void _init_soa_field(_soa_field_t* f) {
+    memset(f, 0, sizeof(_soa_field_t));
+    f->str_encoding = -1;
+    f->num_elem = 1;
+}
+
+/* Parse a nested struct schema */
 static int _decode_nested_struct_schema(_bjdata_decoder_buffer_t* buffer, _soa_field_t* f) {
-    Py_ssize_t capacity = 8;
-    Py_ssize_t count = 0;
+    Py_ssize_t capacity = 8, count = 0;
     _soa_field_t* nested = calloc(capacity, sizeof(_soa_field_t));
 
     if (!nested) {
@@ -807,18 +887,15 @@ static int _decode_nested_struct_schema(_bjdata_decoder_buffer_t* buffer, _soa_f
         }
 
         _soa_field_t* nf = &nested[count];
-        memset(nf, 0, sizeof(_soa_field_t));
-        nf->str_encoding = -1;  /* NOT a special string encoding */
-        nf->num_elem = 1;
+        _init_soa_field(nf);
 
         /* Read field name */
         long long key_len;
         const char* raw;
         DECODE_LENGTH_OR_BAIL_MARKER(key_len, marker);
         READ_OR_BAIL((Py_ssize_t)key_len, raw, "nested field name");
-        nf->name = malloc(key_len + 1);
 
-        if (!nf->name) {
+        if (!(nf->name = malloc(key_len + 1))) {
             PyErr_NoMemory();
             goto bail;
         }
@@ -832,30 +909,21 @@ static int _decode_nested_struct_schema(_bjdata_decoder_buffer_t* buffer, _soa_f
 
         /* Special handling for strings in nested structs */
         if (nf->type_marker == TYPE_STRING) {
-            /* Read byte size (this is numpy byte size, not UTF-8 length) */
             char len_marker;
             READ_CHAR_OR_BAIL(len_marker, "nested string length marker");
 
-            /* Validate integer marker */
-            if (len_marker != TYPE_INT8 && len_marker != TYPE_UINT8 &&
-                    len_marker != TYPE_INT16 && len_marker != TYPE_UINT16 &&
-                    len_marker != TYPE_INT32 && len_marker != TYPE_UINT32 &&
-                    len_marker != TYPE_INT64 && len_marker != TYPE_UINT64 &&
-                    len_marker != TYPE_BYTE) {
+            if (!_is_int_marker(len_marker)) {
                 RAISE_DECODER_EXCEPTION("SOA schema only supports fixed-length types");
             }
 
             long long byte_size;
             DECODE_LENGTH_OR_BAIL_MARKER(byte_size, len_marker);
 
-            /* For nested struct strings: raw numpy bytes, NOT UTF-8 */
-            nf->str_encoding = -1;  /* NOT special string encoding */
+            nf->str_encoding = -1;
             nf->dtype_num = NPY_UNICODE;
-            nf->itemsize = byte_size;  /* Raw numpy byte size */
-            /* Store character count for dtype creation */
+            nf->itemsize = byte_size;
             nf->str_fixed_len = byte_size / 4;  /* UCS-4: 4 bytes per char */
         } else {
-            /* Non-string field: use regular decoding */
             if (_decode_soa_field_type(buffer, nf) < 0) {
                 goto bail;
             }
@@ -869,7 +937,7 @@ static int _decode_nested_struct_schema(_bjdata_decoder_buffer_t* buffer, _soa_f
     f->nested_count = count;
     f->dtype_num = -2;  /* Special marker for nested struct */
 
-    /* Calculate total itemsize as sum of nested field sizes */
+    /* Calculate total itemsize */
     f->itemsize = 0;
 
     for (Py_ssize_t i = 0; i < count; i++) {
@@ -882,11 +950,7 @@ bail:
 
     if (nested) {
         for (Py_ssize_t i = 0; i < count; i++) {
-            if (nested[i].name) {
-                free(nested[i].name);
-            }
-
-            Py_XDECREF(nested[i].str_dict);
+            _free_soa_field(&nested[i]);
         }
 
         free(nested);
@@ -898,23 +962,17 @@ bail:
 /* Parse field type (handles scalar, sub-array, nested struct) */
 static int _decode_soa_field_type(_bjdata_decoder_buffer_t* buffer, _soa_field_t* f) {
     char marker = f->type_marker;
+    int bytelen;
 
     if (marker == TYPE_STRING) {
         /* Fixed-length string: S<int_marker><length> */
         char len_marker;
         READ_CHAR_OR_BAIL(len_marker, "string length marker");
 
-        /* Explicitly check for valid integer markers */
-        if (len_marker != TYPE_INT8 && len_marker != TYPE_UINT8 &&
-                len_marker != TYPE_INT16 && len_marker != TYPE_UINT16 &&
-                len_marker != TYPE_INT32 && len_marker != TYPE_UINT32 &&
-                len_marker != TYPE_INT64 && len_marker != TYPE_UINT64 &&
-                len_marker != TYPE_BYTE) {
-            /* This MUST be raised before any other operation */
+        if (!_is_int_marker(len_marker)) {
             RAISE_DECODER_EXCEPTION("SOA schema only supports fixed-length types");
         }
 
-        /* Now safe to decode length */
         long long byte_len;
         DECODE_LENGTH_OR_BAIL_MARKER(byte_len, len_marker);
 
@@ -922,6 +980,7 @@ static int _decode_soa_field_type(_bjdata_decoder_buffer_t* buffer, _soa_field_t
         f->str_fixed_len = byte_len;
         f->itemsize = byte_len;
         f->dtype_num = NPY_OBJECT;
+
     } else if (marker == OBJECT_START) {
         /* Nested struct */
         if (_decode_nested_struct_schema(buffer, f) < 0) {
@@ -946,12 +1005,7 @@ static int _decode_soa_field_type(_bjdata_decoder_buffer_t* buffer, _soa_field_t
                 }
 
                 DECODE_LENGTH_OR_BAIL(f->str_dict_count);
-
-                f->str_dict = PyList_New(f->str_dict_count);
-
-                if (!f->str_dict) {
-                    return -1;
-                }
+                BAIL_ON_NULL(f->str_dict = PyList_New(f->str_dict_count));
 
                 for (Py_ssize_t i = 0; i < f->str_dict_count; i++) {
                     long long slen;
@@ -972,11 +1026,11 @@ static int _decode_soa_field_type(_bjdata_decoder_buffer_t* buffer, _soa_field_t
                 f->itemsize = f->str_index_size;
                 f->dtype_num = NPY_OBJECT;
 
-            } else if (_soa_get_type_info(next, &f->dtype_num, &f->itemsize) == 0) {
+            } else if (_get_type_info(next, &bytelen) >= 0) {
                 /* Offset string: [$type] */
                 f->str_encoding = SOA_STRING_OFFSET;
-                f->str_index_size = f->itemsize;
-                f->itemsize = f->str_index_size;  /* Index size in payload */
+                f->str_index_size = bytelen;
+                f->itemsize = bytelen;
                 f->dtype_num = NPY_OBJECT;
                 READ_CHAR_OR_BAIL(next, "offset array end");
 
@@ -992,19 +1046,21 @@ static int _decode_soa_field_type(_bjdata_decoder_buffer_t* buffer, _soa_field_t
             char elem_type = next;
             Py_ssize_t elem_count = 1;
 
-            if (elem_type == TYPE_BOOL_TRUE || elem_type == TYPE_BOOL_FALSE) {
-                f->dtype_num = NPY_BOOL;
-                f->itemsize = 1;
-            } else if (_soa_get_type_info(elem_type, &f->dtype_num, &f->itemsize) < 0) {
+            if (_get_type_info(elem_type, &bytelen) < 0) {
                 RAISE_DECODER_EXCEPTION("Unsupported sub-array element type");
             }
+
+            f->dtype_num = _get_type_info(elem_type, &bytelen);
+            f->itemsize = bytelen;
 
             READ_CHAR_OR_BAIL(next, "sub-array next");
 
             while (next != ARRAY_END) {
-                if (next != elem_type &&
-                        !((elem_type == TYPE_BOOL_TRUE || elem_type == TYPE_BOOL_FALSE) &&
-                          (next == TYPE_BOOL_TRUE || next == TYPE_BOOL_FALSE))) {
+                int same_type = (next == elem_type) ||
+                                ((elem_type == TYPE_BOOL_TRUE || elem_type == TYPE_BOOL_FALSE) &&
+                                 (next == TYPE_BOOL_TRUE || next == TYPE_BOOL_FALSE));
+
+                if (!same_type) {
                     RAISE_DECODER_EXCEPTION("Mixed types in sub-array");
                 }
 
@@ -1014,14 +1070,14 @@ static int _decode_soa_field_type(_bjdata_decoder_buffer_t* buffer, _soa_field_t
 
             f->type_marker = elem_type;
             f->num_elem = elem_count;
-            f->itemsize = f->itemsize * elem_count;
+            f->itemsize = bytelen * elem_count;
         }
 
-    } else if (marker == TYPE_BOOL_TRUE || marker == TYPE_BOOL_FALSE) {
-        f->dtype_num = NPY_BOOL;
-        f->itemsize = 1;
-
-    } else if (_soa_get_type_info(marker, &f->dtype_num, &f->itemsize) < 0) {
+    } else if (_get_type_info(marker, &bytelen) >= 0) {
+        /* Simple scalar type */
+        f->dtype_num = _get_type_info(marker, &bytelen);
+        f->itemsize = bytelen;
+    } else {
         RAISE_DECODER_EXCEPTION("Unsupported field type in schema");
     }
 
@@ -1031,136 +1087,9 @@ bail:
     return -1;
 }
 
-/******************************************************************************/
-/* SOA Support Functions */
-/******************************************************************************/
-
-/* Get numpy dtype info for SOA field types */
-static int _soa_get_type_info(char type, int* dtype_num, Py_ssize_t* itemsize) {
-    switch (type) {
-        case TYPE_BYTE:
-            *dtype_num = PyArray_UBYTE;
-            *itemsize = 1;
-            return 0;
-
-        case TYPE_INT8:
-            *dtype_num = PyArray_BYTE;
-            *itemsize = 1;
-            return 0;
-
-        case TYPE_UINT8:
-            *dtype_num = PyArray_UBYTE;
-            *itemsize = 1;
-            return 0;
-
-        case TYPE_INT16:
-            *dtype_num = PyArray_SHORT;
-            *itemsize = 2;
-            return 0;
-
-        case TYPE_UINT16:
-            *dtype_num = PyArray_USHORT;
-            *itemsize = 2;
-            return 0;
-
-        case TYPE_INT32:
-            *dtype_num = PyArray_INT;
-            *itemsize = 4;
-            return 0;
-
-        case TYPE_UINT32:
-            *dtype_num = PyArray_UINT;
-            *itemsize = 4;
-            return 0;
-
-        case TYPE_INT64:
-            *dtype_num = PyArray_LONGLONG;
-            *itemsize = 8;
-            return 0;
-
-        case TYPE_UINT64:
-            *dtype_num = PyArray_ULONGLONG;
-            *itemsize = 8;
-            return 0;
-
-        case TYPE_FLOAT16:
-            *dtype_num = PyArray_HALF;
-            *itemsize = 2;
-            return 0;
-
-        case TYPE_FLOAT32:
-            *dtype_num = PyArray_FLOAT;
-            *itemsize = 4;
-            return 0;
-
-        case TYPE_FLOAT64:
-            *dtype_num = PyArray_DOUBLE;
-            *itemsize = 8;
-            return 0;
-
-        case TYPE_BOOL_TRUE:
-        case TYPE_BOOL_FALSE:
-            *dtype_num = PyArray_BOOL;
-            *itemsize = 1;
-            return 0;
-
-        case TYPE_CHAR:
-            *dtype_num = PyArray_STRING;
-            *itemsize = 1;
-            return 0;
-
-        default:
-            return -1;
-    }
-}
-
-/* Free SOA schema structure */
-static void _free_soa_schema(_soa_schema_t* schema) {
-    if (schema) {
-        if (schema->fields) {
-            for (Py_ssize_t i = 0; i < schema->num_fields; i++) {
-                if (schema->fields[i].name) {
-                    free(schema->fields[i].name);
-                }
-
-                Py_XDECREF(schema->fields[i].str_dict);
-            }
-
-            free(schema->fields);
-        }
-
-        free(schema);
-    }
-}
-
-/* Read an index value (1/2/4 bytes) and return as Py_ssize_t */
-static Py_ssize_t _soa_read_index(_bjdata_decoder_buffer_t* buffer, int size) {
-    const unsigned char* raw;
-    Py_ssize_t read = size, val = 0;
-
-    raw = (const unsigned char*)buffer->read_func(buffer, &read, NULL);
-
-    if (!raw || read < size) {
-        return -1;
-    }
-
-    if (buffer->prefs.islittle) {
-        for (int i = size - 1; i >= 0; i--) {
-            val = (val << 8) | raw[i];
-        }
-    } else {
-        for (int i = 0; i < size; i++) {
-            val = (val << 8) | raw[i];
-        }
-    }
-
-    return val;
-}
-
-/* Decode SOA schema: {field1:type1, field2:type2, ...} */
+/* Build numpy dtype for a field */
 static PyObject* _build_field_dtype(_soa_field_t* f) {
-
-    /* String with special encoding (top-level, UTF-8) -> object dtype */
+    /* String with special encoding -> object dtype */
     if (f->str_encoding >= 0) {
         return (PyObject*)PyArray_DescrFromType(NPY_OBJECT);
     }
@@ -1169,7 +1098,6 @@ static PyObject* _build_field_dtype(_soa_field_t* f) {
     if (f->dtype_num == NPY_UNICODE && f->str_fixed_len > 0) {
         char dtype_str[32];
         snprintf(dtype_str, sizeof(dtype_str), "U%zd", f->str_fixed_len);
-
         PyObject* dtype_string = PyUnicode_FromString(dtype_str);
 
         if (!dtype_string) {
@@ -1252,6 +1180,73 @@ static PyObject* _build_field_dtype(_soa_field_t* f) {
     return (PyObject*)PyArray_DescrFromType(f->dtype_num);
 }
 
+/* Decode SOA schema */
+static _soa_schema_t* _decode_soa_schema(_bjdata_decoder_buffer_t* buffer) {
+    _soa_schema_t* schema = NULL;
+    _soa_field_t* fields = NULL;
+    Py_ssize_t num_fields = 0, capacity = 16;
+    char marker;
+    long long key_len;
+    const char* raw;
+
+    BAIL_ON_NULL(schema = (_soa_schema_t*)calloc(1, sizeof(_soa_schema_t)));
+    BAIL_ON_NULL(fields = (_soa_field_t*)calloc(capacity, sizeof(_soa_field_t)));
+
+    READ_CHAR_OR_BAIL(marker, "SOA schema marker");
+
+    while (marker != OBJECT_END) {
+        if (marker == TYPE_NOOP) {
+            READ_CHAR_OR_BAIL(marker, "SOA schema marker after no-op");
+            continue;
+        }
+
+        if (num_fields >= capacity) {
+            capacity *= 2;
+            _soa_field_t* new_fields = realloc(fields, capacity * sizeof(_soa_field_t));
+            BAIL_ON_NULL(new_fields);
+            fields = new_fields;
+        }
+
+        _soa_field_t* f = &fields[num_fields];
+        _init_soa_field(f);
+
+        /* Decode field name */
+        DECODE_LENGTH_OR_BAIL_MARKER(key_len, marker);
+        READ_OR_BAIL((Py_ssize_t)key_len, raw, "SOA field name");
+        BAIL_ON_NULL(f->name = malloc(key_len + 1));
+        memcpy(f->name, raw, key_len);
+        f->name[key_len] = '\0';
+        f->name_len = key_len;
+
+        /* Decode field type */
+        READ_CHAR_OR_BAIL(f->type_marker, "SOA field type");
+
+        if (_decode_soa_field_type(buffer, f) < 0) {
+            goto bail;
+        }
+
+        num_fields++;
+        READ_CHAR_OR_BAIL(marker, "SOA schema next marker");
+    }
+
+    schema->fields = fields;
+    schema->num_fields = num_fields;
+    return schema;
+
+bail:
+
+    if (fields) {
+        for (Py_ssize_t i = 0; i < num_fields; i++) {
+            _free_soa_field(&fields[i]);
+        }
+
+        free(fields);
+    }
+
+    free(schema);
+    return NULL;
+}
+
 /* Decode SOA payload into numpy structured array */
 static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_schema_t* schema, int is_row_major) {
     PyObject* result = NULL;
@@ -1264,7 +1259,6 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
     unsigned int ndims = 0;
     npy_intp* npy_dims = NULL;
     Py_ssize_t i, j;
-    char* data_ptr;
     Py_ssize_t* field_offsets = NULL;
     Py_ssize_t itemsize;
     int has_strings = 0;
@@ -1278,7 +1272,7 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
         }
     }
 
-    /* Read count marker - must be # */
+    /* Read count marker */
     READ_CHAR_OR_BAIL(marker, "SOA count marker");
 
     if (marker != CONTAINER_COUNT) {
@@ -1289,7 +1283,6 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
     READ_CHAR_OR_BAIL(marker, "SOA count type");
 
     if (marker == ARRAY_START) {
-        /* ND dimensions array */
         long long dim_val;
         BAIL_ON_NULL(dims = malloc(32 * sizeof(long long)));
         READ_CHAR_OR_BAIL(marker, "SOA dims first marker");
@@ -1307,7 +1300,6 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
             READ_CHAR_OR_BAIL(marker, "SOA dims next marker");
         }
     } else {
-        /* Scalar count - marker already contains the integer type (e.g., 'U' for uint8) */
         DECODE_LENGTH_OR_BAIL_MARKER(count, marker);
         ndims = 1;
         BAIL_ON_NULL(dims = malloc(sizeof(long long)));
@@ -1322,10 +1314,8 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
         _soa_field_t* f = &schema->fields[i];
         PyObject* fn = PyUnicode_FromStringAndSize(f->name, f->name_len);
         BAIL_ON_NULL(fn);
-
         PyObject* fd = _build_field_dtype(f);
         BAIL_ON_NULL(fd);
-
         PyObject* t = PyTuple_Pack(2, fn, fd);
         Py_DECREF(fn);
         Py_DECREF(fd);
@@ -1349,7 +1339,7 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
 
     /* Get field offsets from actual array dtype */
     {
-        int offsets_retrieved = 0;
+        int offsets_ok = 0;
         PyArray_Descr* d = PyArray_DESCR(array);
         PyObject* fdict = PyObject_GetAttrString((PyObject*)d, "fields");
 
@@ -1361,19 +1351,15 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
                     PyObject* info = PyObject_GetItem(fdict, key);
                     Py_DECREF(key);
 
-                    if (info) {
-                        if (PyTuple_Check(info) && PyTuple_GET_SIZE(info) >= 2) {
-                            field_offsets[i] = PyLong_AsSsize_t(PyTuple_GET_ITEM(info, 1));
+                    if (info && PyTuple_Check(info) && PyTuple_GET_SIZE(info) >= 2) {
+                        field_offsets[i] = PyLong_AsSsize_t(PyTuple_GET_ITEM(info, 1));
 
-                            if (!PyErr_Occurred()) {
-                                offsets_retrieved++;
-                            }
+                        if (!PyErr_Occurred()) {
+                            offsets_ok++;
                         }
-
-                        Py_DECREF(info);
-                    } else {
-                        PyErr_Clear();
                     }
+
+                    Py_XDECREF(info);
                 }
             }
 
@@ -1382,10 +1368,10 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
             Py_XDECREF(fdict);
         }
 
-        PyErr_Clear();  /* Clear any errors from GetItem */
+        PyErr_Clear();
 
-        /* Fallback: calculate manually if numpy lookup failed */
-        if (offsets_retrieved != schema->num_fields) {
+        /* Fallback: calculate manually */
+        if (offsets_ok != schema->num_fields) {
             Py_ssize_t offset = 0;
 
             for (i = 0; i < schema->num_fields; i++) {
@@ -1397,42 +1383,33 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
 
     /* Read payload */
     if (!has_strings) {
-        /* Original numeric-only path */
+        /* Numeric-only path */
+#define READ_NUMERIC_FIELD(fi, ri) do { \
+        _soa_field_t* f = &schema->fields[fi]; \
+        char* ptr = (char*)PyArray_DATA(array) + (ri)*itemsize + field_offsets[fi]; \
+        if (f->type_marker == TYPE_BOOL_TRUE || f->type_marker == TYPE_BOOL_FALSE) { \
+            char b; READ_CHAR_OR_BAIL(b, "SOA bool"); \
+            *((npy_bool*)ptr) = (b == TYPE_BOOL_TRUE); \
+        } else { \
+            READ_INTO_OR_BAIL(f->itemsize, ptr, "SOA field"); \
+        } \
+    } while(0)
+
         if (is_row_major) {
             for (j = 0; j < count; j++) {
-                char* rec = (char*)PyArray_DATA(array) + j * itemsize;
-
                 for (i = 0; i < schema->num_fields; i++) {
-                    _soa_field_t* f = &schema->fields[i];
-                    data_ptr = rec + field_offsets[i];
-
-                    if (f->type_marker == TYPE_BOOL_TRUE || f->type_marker == TYPE_BOOL_FALSE) {
-                        char b;
-                        READ_CHAR_OR_BAIL(b, "SOA bool");
-                        *((npy_bool*)data_ptr) = (b == TYPE_BOOL_TRUE);
-                    } else {
-                        READ_INTO_OR_BAIL(f->itemsize, data_ptr, "SOA field");
-                    }
+                    READ_NUMERIC_FIELD(i, j);
                 }
             }
         } else {
-            /* Column-major: all values of field1, then field2, etc. */
             for (i = 0; i < schema->num_fields; i++) {
-                _soa_field_t* f = &schema->fields[i];
-
                 for (j = 0; j < count; j++) {
-                    data_ptr = (char*)PyArray_DATA(array) + j * itemsize + field_offsets[i];
-
-                    if (f->type_marker == TYPE_BOOL_TRUE || f->type_marker == TYPE_BOOL_FALSE) {
-                        char b;
-                        READ_CHAR_OR_BAIL(b, "SOA bool");
-                        *((npy_bool*)data_ptr) = (b == TYPE_BOOL_TRUE);
-                    } else {
-                        READ_INTO_OR_BAIL(f->itemsize, data_ptr, "SOA field");
-                    }
+                    READ_NUMERIC_FIELD(i, j);
                 }
             }
         }
+
+#undef READ_NUMERIC_FIELD
     } else {
         /* Path with string fields */
         BAIL_ON_NULL(offset_tables = calloc(schema->num_fields, sizeof(Py_ssize_t*)));
@@ -1442,10 +1419,8 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
         _soa_field_t* f = &schema->fields[fi]; \
         char* ptr = (char*)PyArray_DATA(array) + (ri)*itemsize + field_offsets[fi]; \
         if (f->str_encoding == SOA_STRING_FIXED) { \
-            /* Read UTF-8 bytes, strip nulls, decode to Python string */ \
             const char* raw; \
             READ_OR_BAIL(f->itemsize, raw, "SOA fixed str"); \
-            /* Find actual length (strip trailing nulls) */ \
             Py_ssize_t actual_len = f->itemsize; \
             while (actual_len > 0 && raw[actual_len - 1] == '\0') actual_len--; \
             PyObject* s = PyUnicode_FromStringAndSize(raw, actual_len); \
@@ -1458,7 +1433,6 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
             Py_INCREF(s); \
             *(PyObject**)ptr = s; \
         } else if (f->str_encoding == SOA_STRING_OFFSET) { \
-            /* Store index temporarily, resolve later */ \
             *(Py_ssize_t*)ptr = _soa_read_index(buffer, f->str_index_size); \
         } else if (f->type_marker == TYPE_BOOL_TRUE || f->type_marker == TYPE_BOOL_FALSE) { \
             for (Py_ssize_t e = 0; e < f->num_elem; e++) { \
@@ -1466,22 +1440,24 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
                 ((npy_bool*)ptr)[e] = (b == TYPE_BOOL_TRUE); \
             } \
         } else if (f->dtype_num == -2 && f->nested_fields) { \
-            /* Nested struct - read raw bytes */ \
             READ_INTO_OR_BAIL(f->itemsize, ptr, "SOA nested struct"); \
         } else { \
-            /* Numeric types - read raw bytes */ \
             READ_INTO_OR_BAIL(f->itemsize, ptr, "SOA field"); \
         } \
     } while(0)
 
         if (is_row_major) {
-            for (j = 0; j < count; j++) for (i = 0; i < schema->num_fields; i++) {
+            for (j = 0; j < count; j++) {
+                for (i = 0; i < schema->num_fields; i++) {
                     READ_SOA_FIELD(i, j);
                 }
+            }
         } else {
-            for (i = 0; i < schema->num_fields; i++) for (j = 0; j < count; j++) {
+            for (i = 0; i < schema->num_fields; i++) {
+                for (j = 0; j < count; j++) {
                     READ_SOA_FIELD(i, j);
                 }
+            }
         }
 
 #undef READ_SOA_FIELD
@@ -1516,7 +1492,8 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
             for (j = 0; j < count; j++) {
                 char* ptr = (char*)PyArray_DATA(array) + j * itemsize + field_offsets[i];
                 Py_ssize_t start = offset_tables[i][j], end = offset_tables[i][j + 1];
-                PyObject* s = PyUnicode_FromStringAndSize(string_buffers[i] ? string_buffers[i] + start : "", end - start);
+                PyObject* s = PyUnicode_FromStringAndSize(
+                                  string_buffers[i] ? string_buffers[i] + start : "", end - start);
                 BAIL_ON_NULL(s);
                 *(PyObject**)ptr = s;
             }
@@ -1553,87 +1530,13 @@ bail:
     return result;
 }
 
-/* Implementation - add before _get_container_params */
-static _soa_schema_t* _decode_soa_schema(_bjdata_decoder_buffer_t* buffer) {
-    _soa_schema_t* schema = NULL;
-    _soa_field_t* fields = NULL;
-    Py_ssize_t num_fields = 0, capacity = 16;
-    char marker;
-    long long key_len;
-    const char* raw;
-
-    BAIL_ON_NULL(schema = (_soa_schema_t*)calloc(1, sizeof(_soa_schema_t)));
-    BAIL_ON_NULL(fields = (_soa_field_t*)calloc(capacity, sizeof(_soa_field_t)));
-
-    READ_CHAR_OR_BAIL(marker, "SOA schema marker");
-
-    while (marker != OBJECT_END) {
-        if (marker == TYPE_NOOP) {
-            READ_CHAR_OR_BAIL(marker, "SOA schema marker after no-op");
-            continue;
-        }
-
-        if (num_fields >= capacity) {
-            capacity *= 2;
-            _soa_field_t* new_fields = realloc(fields, capacity * sizeof(_soa_field_t));
-            BAIL_ON_NULL(new_fields);
-            fields = new_fields;
-        }
-
-        _soa_field_t* f = &fields[num_fields];
-        memset(f, 0, sizeof(_soa_field_t));
-        f->str_encoding = -1;
-        f->num_elem = 1;
-
-        /* Decode field name */
-        DECODE_LENGTH_OR_BAIL_MARKER(key_len, marker);
-        READ_OR_BAIL((Py_ssize_t)key_len, raw, "SOA field name");
-        BAIL_ON_NULL(f->name = malloc(key_len + 1));
-        memcpy(f->name, raw, key_len);
-        f->name[key_len] = '\0';
-        f->name_len = key_len;
-
-        /* Decode field type */
-        READ_CHAR_OR_BAIL(f->type_marker, "SOA field type");
-
-        if (_decode_soa_field_type(buffer, f) < 0) {
-            goto bail;
-        }
-
-        num_fields++;
-        READ_CHAR_OR_BAIL(marker, "SOA schema next marker");
-    }
-
-    schema->fields = fields;
-    schema->num_fields = num_fields;
-    return schema;
-
-bail:
-
-    if (fields) {
-        for (Py_ssize_t i = 0; i < num_fields; i++) {
-            if (fields[i].name) {
-                free(fields[i].name);
-            }
-
-            Py_XDECREF(fields[i].str_dict);
-            /* TODO: recursively free nested_fields if present */
-        }
-
-        free(fields);
-    }
-
-    free(schema);
-    return NULL;
-}
-
 /******************************************************************************/
 
-static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffer, int in_mapping, unsigned int* nd_ndim, long long** nd_dims) {
+static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffer, int in_mapping,
+        unsigned int* nd_ndim, long long** nd_dims) {
     _container_params_t params = {0};
     char marker;
 
-    // fixed type for all values
     READ_CHAR_OR_BAIL(marker, "container type, count or 1st key/value type");
 
     if (CONTAINER_TYPE == marker) {
@@ -1641,7 +1544,6 @@ static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffe
 
         /* Check for SOA: ${ indicates schema object */
         if (marker == OBJECT_START) {
-            /* This is SOA format - decode schema */
             params.soa_schema = _decode_soa_schema(buffer);
 
             if (!params.soa_schema) {
@@ -1652,7 +1554,7 @@ static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffe
             params.is_soa = 1;
             params.type = marker;
             params.counting = 1;
-            params.count = -1; /* Signal SOA mode */
+            params.count = -1;
             params.marker = marker;
             params.invalid = 0;
             return params;
@@ -1690,16 +1592,13 @@ static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffe
 
         READ_CHAR_OR_BAIL(marker, "container count or 1st key/value type");
     } else {
-        // container type not fixed
         params.type = TYPE_NONE;
     }
 
-    // container value count
     if (CONTAINER_COUNT == marker) {
         params.counting = 1;
 #ifdef USE__BJDATA
         READ_CHAR_OR_BAIL(marker, "container count marker or optimized ND-array dimension array marker");
-        // obtain the total number of elements of an optimized ND array header
 
         if (ARRAY_START == marker && nd_ndim != NULL) {
             long long length = 0, i;
@@ -1720,7 +1619,6 @@ static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffe
                 }
             } else {
                 unsigned int i = 0;
-                long long length = 0;
                 *nd_ndim = 32;
                 *nd_dims = (long long*)malloc(sizeof(long long) * (*nd_ndim));
                 marker = dims.marker;
@@ -1739,20 +1637,18 @@ static _container_params_t _get_container_params(_bjdata_decoder_buffer_t* buffe
                 }
 
                 *nd_ndim = i;
-                *nd_dims = (long long*)realloc(*nd_dims, sizeof(long long) * (i));
+                *nd_dims = (long long*)realloc(*nd_dims, sizeof(long long) * i);
             }
         } else
 #endif
             DECODE_LENGTH_OR_BAIL_MARKER(params.count, marker);
 
-        // reading ahead just to capture type, which will not exist if type is fixed
         if ((params.count > 0) && (in_mapping || (TYPE_NONE == params.type))) {
             READ_CHAR_OR_BAIL(marker, "1st key/value type");
         } else {
             marker = params.type;
         }
     } else if (TYPE_NONE == params.type) {
-        // count not provided but indicate that
         params.count = 1;
         params.counting = 0;
     } else {
@@ -1770,77 +1666,19 @@ bail:
     return params;
 }
 
+/******************************************************************************/
+
 static int _is_no_data_type(char type) {
     return ((TYPE_NULL == type) || (TYPE_BOOL_TRUE == type) || (TYPE_BOOL_FALSE == type));
 }
 
 static int _is_fixed_len_type(char type) {
-    return ((TYPE_INT8 == type) || (TYPE_UINT8 == type) || (TYPE_INT16 == type)
-            || (TYPE_UINT16 == type) || (TYPE_INT32 == type) || (TYPE_UINT32 == type)
-            || (TYPE_INT64 == type) || (TYPE_UINT64 == type) || (TYPE_CHAR == type)
-            || (TYPE_FLOAT16 == type) || (TYPE_FLOAT32 == type) || (TYPE_FLOAT64 == type))
-           || (TYPE_BYTE == type);
+    int bytelen;
+    return (_get_type_info(type, &bytelen) >= 0 &&
+            type != TYPE_BOOL_TRUE && type != TYPE_BOOL_FALSE);
 }
 
-// Note: Does NOT reserve a new reference
-static int _get_type_info(char type, int* bytelen) {
-    switch (type) {
-        case TYPE_FLOAT16:
-            *bytelen = 2;
-            return PyArray_HALF;
-
-        case TYPE_FLOAT32:
-            *bytelen = 4;
-            return PyArray_FLOAT;
-
-        case TYPE_FLOAT64:
-            *bytelen = 8;
-            return PyArray_DOUBLE;
-
-        case TYPE_INT8:
-            *bytelen = 1;
-            return PyArray_BYTE;
-
-        case TYPE_UINT8:
-            *bytelen = 1;
-            return PyArray_UBYTE;
-
-        case TYPE_INT16:
-            *bytelen = 2;
-            return PyArray_SHORT;
-
-        case TYPE_UINT16:
-            *bytelen = 2;
-            return PyArray_USHORT;
-
-        case TYPE_INT32:
-            *bytelen = 4;
-            return PyArray_INT;
-
-        case TYPE_UINT32:
-            *bytelen = 4;
-            return PyArray_UINT;
-
-        case TYPE_INT64:
-            *bytelen = 8;
-            return PyArray_LONGLONG;
-
-        case TYPE_UINT64:
-            *bytelen = 8;
-            return PyArray_ULONGLONG;
-
-        case TYPE_CHAR:
-            *bytelen = 1;
-            return PyArray_STRING;
-
-        default:
-            *bytelen = 0;
-            PyErr_SetString(PyExc_RuntimeError, "Internal error - _get_type_info");
-            return PyArray_USERDEF;
-    }
-}
-
-// Note: Does NOT reserve a new reference
+/* Note: Does NOT reserve a new reference */
 static PyObject* _no_data_type(char type) {
     switch (type) {
         case TYPE_NULL:
@@ -1872,7 +1710,7 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
 
     /* Check if this is SOA format (row-major) */
     if (params.is_soa && params.soa_schema) {
-        PyObject* result = _decode_soa_payload(buffer, params.soa_schema, 1); /* 1 = row-major for arrays */
+        PyObject* result = _decode_soa_payload(buffer, params.soa_schema, 1);
         _free_soa_schema(params.soa_schema);
         return result;
     }
@@ -1880,52 +1718,60 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
     marker = params.marker;
 
     if (params.counting) {
-        // special case - byte array
-        if (((buffer->prefs.uint8_bytes ? TYPE_UINT8 : TYPE_BYTE) == params.type) && !buffer->prefs.no_bytes && ndims == 0) {
+        /* Byte array special case */
+        if (((buffer->prefs.uint8_bytes ? TYPE_UINT8 : TYPE_BYTE) == params.type) &&
+                !buffer->prefs.no_bytes && ndims == 0) {
             BAIL_ON_NULL(list = PyBytes_FromStringAndSize(NULL, params.count));
             READ_INTO_OR_BAIL(params.count, PyBytes_AS_STRING(list), "bytes array");
+            free(dims);
             return list;
-            // special case - nd-array
-        } else if (ndims && params.type) {
-            unsigned int i;
+        }
+
+        /* ND-array special case */
+        if (ndims && params.type) {
             int bytelen = 0;
-            npy_intp* arraydim = calloc(sizeof(npy_intp), ndims);
             int pytype = _get_type_info(params.type, &bytelen);
+            npy_intp* arraydim = calloc(sizeof(npy_intp), ndims);
             PyArrayObject* jdarray = NULL;
 
-            for (i = 0; i < ndims; i++) {
+            for (unsigned int i = 0; i < ndims; i++) {
                 arraydim[i] = dims[i];
             }
 
-            BAIL_ON_NULL(jdarray = (PyArrayObject*) PyArray_SimpleNew(ndims, arraydim, pytype));
+            BAIL_ON_NULL(jdarray = (PyArrayObject*)PyArray_SimpleNew(ndims, arraydim, pytype));
             READ_INTO_OR_BAIL(bytelen * params.count, (char*)PyArray_DATA(jdarray), "ND array");
             free(arraydim);
+            free(dims);
             return PyArray_Return(jdarray);
-            // special case - no data types
-        } else if (_is_no_data_type(params.type)) {
+        }
+
+        /* No-data types special case */
+        if (_is_no_data_type(params.type)) {
             BAIL_ON_NULL(list = PyList_New(params.count));
             BAIL_ON_NULL(value = _no_data_type(params.type));
 
             while (params.count > 0) {
                 PyList_SET_ITEM(list, --params.count, value);
-                // reference stolen each time
                 Py_INCREF(value);
             }
 
             value = NULL;
-        } else if (_is_fixed_len_type(params.type) && params.count > 0) { // 1d packed array
+        }
+        /* 1D packed array */
+        else if (_is_fixed_len_type(params.type) && params.count > 0) {
             int bytelen = 0;
-            npy_intp* arraydim = calloc(sizeof(npy_intp), 1);
             int pytype = _get_type_info(params.type, &bytelen);
+            npy_intp arraydim = params.count;
             PyArrayObject* jdarray = NULL;
-            arraydim[0] = params.count;
-            BAIL_ON_NULL(jdarray = (PyArrayObject*) PyArray_SimpleNew(1, arraydim, pytype));
+
+            BAIL_ON_NULL(jdarray = (PyArrayObject*)PyArray_SimpleNew(1, &arraydim, pytype));
             READ_INTO_OR_BAIL(bytelen * params.count, (char*)PyArray_DATA(jdarray), "1D packed array");
-            free(arraydim);
+            free(dims);
             return PyArray_Return(jdarray);
-            // take advantage of faster creation/setting of list since count known
-        } else {
-            Py_ssize_t list_pos = 0; // position in list for far fast setting via PyList_SET_ITEM
+        }
+        /* Generic counted array */
+        else {
+            Py_ssize_t list_pos = 0;
             BAIL_ON_NULL(list = PyList_New(params.count));
 
             while (params.count > 0) {
@@ -1936,7 +1782,6 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
 
                 BAIL_ON_NULL(value = _bjdata_decode_value(buffer, &marker));
                 PyList_SET_ITEM(list, list_pos++, value);
-                // reference stolen by list so no longer want to decrement on failure
                 value = NULL;
                 params.count--;
 
@@ -1946,6 +1791,7 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
             }
         }
     } else {
+        /* Uncounted array */
         BAIL_ON_NULL(list = PyList_New(0));
 
         while (ARRAY_END != marker) {
@@ -1964,24 +1810,19 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
         }
     }
 
-    if (dims) {
-        free(dims);
-    }
-
+    free(dims);
     return list;
 
 bail:
     Py_XDECREF(value);
     Py_XDECREF(list);
-
-    if (dims) {
-        free(dims);
-    }
-
+    free(dims);
     return NULL;
 }
 
-// same as string, except there is no 'S' marker
+/******************************************************************************/
+
+/* Decode object key (string without 'S' marker) */
 static PyObject* _decode_object_key(_bjdata_decoder_buffer_t* buffer, char marker, int intern) {
     long long length;
     const char* raw;
@@ -1991,15 +1832,14 @@ static PyObject* _decode_object_key(_bjdata_decoder_buffer_t* buffer, char marke
     READ_OR_BAIL((Py_ssize_t)length, raw, "string");
 
     BAIL_ON_NULL(key = PyUnicode_FromStringAndSize(raw, (Py_ssize_t)length));
-    // unicode string interning not supported in v2
-#if PY_MAJOR_VERSION < 3
-    UNUSED(intern);
-#else
+#if PY_MAJOR_VERSION >= 3
 
     if (intern) {
         PyUnicode_InternInPlace(&key);
     }
 
+#else
+    UNUSED(intern);
 #endif
     return key;
 
@@ -2007,8 +1847,7 @@ bail:
     return NULL;
 }
 
-// used by _decode_object* functions
-#define DECODE_OBJECT_KEY_OR_RAISE_ENCODER_EXCEPTION(context_str, intern) {\
+#define DECODE_OBJECT_KEY_OR_RAISE(context_str, intern) {\
         key = _decode_object_key(buffer, marker, intern);\
         if (NULL == key) {\
             RAISE_DECODER_EXCEPTION("Failed to decode object key (" context_str ")");\
@@ -2032,32 +1871,27 @@ static PyObject* _decode_object_with_pairs_hook(_bjdata_decoder_buffer_t* buffer
 
     /* Check if this is SOA format */
     if (params.is_soa && params.soa_schema) {
-        PyObject* result = _decode_soa_payload(buffer, params.soa_schema, 0); /* 0 = column-major for objects */
+        PyObject* result = _decode_soa_payload(buffer, params.soa_schema, 0);
         _free_soa_schema(params.soa_schema);
         return result;
     }
 
     marker = params.marker;
 
-    // take advantage of faster creation/setting of list since count known
     if (params.counting) {
-        Py_ssize_t list_pos = 0; // position in list for far fast setting via PyList_SET_ITEM
-
+        Py_ssize_t list_pos = 0;
         BAIL_ON_NULL(list = PyList_New(params.count));
 
-        // special case: no data values (keys only)
         if (_is_no_data_type(params.type)) {
             value = _no_data_type(params.type);
             Py_INCREF(value);
 
             while (params.count > 0) {
-                DECODE_OBJECT_KEY_OR_RAISE_ENCODER_EXCEPTION("sized, no data", intern);
+                DECODE_OBJECT_KEY_OR_RAISE("sized, no data", intern);
                 BAIL_ON_NULL(item = PyTuple_Pack(2, key, value));
                 Py_CLEAR(key);
                 PyList_SET_ITEM(list, list_pos++, item);
-                // reference stolen
                 item = NULL;
-
                 params.count--;
 
                 if (params.count > 0) {
@@ -2073,15 +1907,13 @@ static PyObject* _decode_object_with_pairs_hook(_bjdata_decoder_buffer_t* buffer
                     continue;
                 }
 
-                DECODE_OBJECT_KEY_OR_RAISE_ENCODER_EXCEPTION("sized", intern);
+                DECODE_OBJECT_KEY_OR_RAISE("sized", intern);
                 BAIL_ON_NULL(value = _bjdata_decode_value(buffer, fixed_type));
                 BAIL_ON_NULL(item = PyTuple_Pack(2, key, value));
                 Py_CLEAR(key);
                 Py_CLEAR(value);
                 PyList_SET_ITEM(list, list_pos++, item);
-                // reference stolen
                 item = NULL;
-
                 params.count--;
 
                 if (params.count > 0) {
@@ -2099,7 +1931,7 @@ static PyObject* _decode_object_with_pairs_hook(_bjdata_decoder_buffer_t* buffer
                 continue;
             }
 
-            DECODE_OBJECT_KEY_OR_RAISE_ENCODER_EXCEPTION("unsized", intern);
+            DECODE_OBJECT_KEY_OR_RAISE("unsized", intern);
             BAIL_ON_NULL(value = _bjdata_decode_value(buffer, fixed_type));
             BAIL_ON_NULL(item = PyTuple_Pack(2, key, value));
             Py_CLEAR(key);
@@ -2127,7 +1959,7 @@ bail:
 static PyObject* _decode_object(_bjdata_decoder_buffer_t* buffer) {
     _container_params_t params = _get_container_params(buffer, 1, NULL, NULL);
     PyObject* obj = NULL;
-    PyObject* newobj = NULL; // result of object_hook (if applicable)
+    PyObject* newobj = NULL;
     PyObject* key = NULL;
     PyObject* value = NULL;
     char* fixed_type;
@@ -2140,26 +1972,22 @@ static PyObject* _decode_object(_bjdata_decoder_buffer_t* buffer) {
 
     /* Check if this is SOA format */
     if (params.is_soa && params.soa_schema) {
-        PyObject* result = _decode_soa_payload(buffer, params.soa_schema, 0); /* 0 = column-major for objects */
+        PyObject* result = _decode_soa_payload(buffer, params.soa_schema, 0);
         _free_soa_schema(params.soa_schema);
         return result;
     }
 
     marker = params.marker;
-
     BAIL_ON_NULL(obj = PyDict_New());
 
-    // special case: no data values (keys only)
     if (params.counting && _is_no_data_type(params.type)) {
         value = _no_data_type(params.type);
 
         while (params.count > 0) {
-            DECODE_OBJECT_KEY_OR_RAISE_ENCODER_EXCEPTION("sized, no data", intern);
+            DECODE_OBJECT_KEY_OR_RAISE("sized, no data", intern);
             BAIL_ON_NONZERO(PyDict_SetItem(obj, key, value));
-            // reference stolen in above call, but only for value!
             Py_CLEAR(key);
             Py_INCREF(value);
-
             params.count--;
 
             if (params.count > 0) {
@@ -2175,7 +2003,7 @@ static PyObject* _decode_object(_bjdata_decoder_buffer_t* buffer) {
                 continue;
             }
 
-            DECODE_OBJECT_KEY_OR_RAISE_ENCODER_EXCEPTION("sized/unsized", intern);
+            DECODE_OBJECT_KEY_OR_RAISE("sized/unsized", intern);
             BAIL_ON_NULL(value = _bjdata_decode_value(buffer, fixed_type));
             BAIL_ON_NONZERO(PyDict_SetItem(obj, key, value));
             Py_CLEAR(key);
@@ -2209,7 +2037,6 @@ bail:
 
 /******************************************************************************/
 
-// only used by _bjdata_decode_value
 #define RETURN_OR_RAISE_DECODER_EXCEPTION(item, item_str) {\
         obj = (item);\
         if (NULL != obj) {\
@@ -2326,7 +2153,7 @@ int _bjdata_decoder_init(void) {
         goto bail;
     }
 
-    PyDec_Type = (PyTypeObject*) tmp_obj;
+    PyDec_Type = (PyTypeObject*)tmp_obj;
     Py_CLEAR(tmp_module);
 
     return 0;
@@ -2338,7 +2165,6 @@ bail:
     Py_XDECREF(tmp_module);
     return 1;
 }
-
 
 void _bjdata_decoder_cleanup(void) {
     Py_CLEAR(DecoderException);

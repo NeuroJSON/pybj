@@ -82,16 +82,16 @@ static int _encode_mapping_key(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 static int _encode_PyMapping(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 static int _encode_NDarray(PyObject* obj, _bjdata_encoder_buffer_t* buffer);
 static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int is_row_major);
+
+/* Helper functions for SOA encoding */
 static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buffer_t* buffer);
 static int _write_index_value(Py_ssize_t idx, int size, _bjdata_encoder_buffer_t* buffer);
-static int _write_string_schema(_string_field_info_t* info, _bjdata_encoder_buffer_t* buffer);
-static int _write_string_value(PyObject* str_val, _string_field_info_t* info,
-                               Py_ssize_t record_index, _bjdata_encoder_buffer_t* buffer);
 static int _analyze_string_field(PyArrayObject* flat, PyObject* field_name,
                                  Py_ssize_t field_index, npy_intp count,
                                  double threshold, _string_field_info_t* info);
 
-const int numpytypes[][2] = {
+/* Unified lookup table for numpy type to BJData marker */
+static const int numpytypes[][2] = {
     {NPY_BOOL,       TYPE_UINT8},
     {NPY_BYTE,       TYPE_INT8},
     {NPY_INT8,       TYPE_INT8},
@@ -288,6 +288,7 @@ bail:
 
 /******************************************************************************/
 
+/* Unified marker lookup - used by both regular arrays and SOA */
 static int _lookup_marker(npy_intp numpytypeid) {
     int i, len = (sizeof(numpytypes) >> 3);
 
@@ -300,48 +301,41 @@ static int _lookup_marker(npy_intp numpytypeid) {
     return -1;
 }
 
-/* Get BJData type marker for numpy dtype */
+/* Get SOA-specific type marker (excludes string types, includes bool) */
 static int _get_soa_type_marker(int dtype_num) {
+    /* Boolean needs special handling in SOA */
     if (dtype_num == NPY_BOOL) {
         return TYPE_BOOL_TRUE;
-    } else if (dtype_num == NPY_INT8 || dtype_num == NPY_BYTE) {
-        return TYPE_INT8;
-    } else if (dtype_num == NPY_UINT8 || dtype_num == NPY_UBYTE) {
-        return TYPE_UINT8;
-    } else if (dtype_num == NPY_INT16 || dtype_num == NPY_SHORT) {
-        return TYPE_INT16;
-    } else if (dtype_num == NPY_UINT16 || dtype_num == NPY_USHORT) {
-        return TYPE_UINT16;
-    } else if (dtype_num == NPY_INT32 || dtype_num == NPY_INT) {
-        return TYPE_INT32;
-    } else if (dtype_num == NPY_UINT32 || dtype_num == NPY_UINT) {
-        return TYPE_UINT32;
-    } else if (dtype_num == NPY_INT64 || dtype_num == NPY_LONGLONG) {
-        return TYPE_INT64;
-    } else if (dtype_num == NPY_UINT64 || dtype_num == NPY_ULONGLONG) {
-        return TYPE_UINT64;
-    } else if (dtype_num == NPY_FLOAT16 || dtype_num == NPY_HALF) {
-        return TYPE_FLOAT16;
-    } else if (dtype_num == NPY_FLOAT32 || dtype_num == NPY_FLOAT) {
-        return TYPE_FLOAT32;
-    } else if (dtype_num == NPY_FLOAT64 || dtype_num == NPY_DOUBLE) {
-        return TYPE_FLOAT64;
-    } else {
+    }
+
+    /* For other types, use the unified lookup */
+    int marker = _lookup_marker(dtype_num);
+
+    /* Filter out string types - they need special handling in SOA */
+    if (marker == TYPE_STRING) {
         return -1;
     }
+
+    return marker;
+}
+
+/* Check if a dtype is string/unicode */
+static inline int _is_string_type(int type_num) {
+    return (type_num == NPY_UNICODE || type_num == NPY_STRING);
 }
 
 /* Recursively check if a dtype is supported for SOA encoding */
 static int _is_soa_compatible_dtype(PyArray_Descr* fd) {
     int type_num = fd->type_num;
 
-    /* Simple scalar types */
-    if (type_num == NPY_UNICODE || type_num == NPY_STRING) {
+    /* String types are supported */
+    if (_is_string_type(type_num)) {
         return 1;
     }
 
+    /* Numeric types (including bool) */
     if (_get_soa_type_marker(type_num) >= 0) {
-        return 1;  /* Numeric types */
+        return 1;
     }
 
     if (type_num == NPY_VOID) {
@@ -349,7 +343,6 @@ static int _is_soa_compatible_dtype(PyArray_Descr* fd) {
         PyObject* subdtype = PyObject_GetAttrString((PyObject*)fd, "subdtype");
 
         if (subdtype && subdtype != Py_None && PyTuple_Check(subdtype) && PyTuple_GET_SIZE(subdtype) >= 2) {
-            /* Sub-array: check base type */
             PyArray_Descr* base = (PyArray_Descr*)PyTuple_GET_ITEM(subdtype, 0);
             int result = _is_soa_compatible_dtype(base);
             Py_DECREF(subdtype);
@@ -363,10 +356,9 @@ static int _is_soa_compatible_dtype(PyArray_Descr* fd) {
         PyObject* names = PyObject_GetAttrString((PyObject*)fd, "names");
 
         if (names && names != Py_None && PyTuple_Check(names) && PyTuple_GET_SIZE(names) > 0) {
-            /* It's a nested struct - check all its fields recursively */
             PyObject* fields = PyObject_GetAttrString((PyObject*)fd, "fields");
 
-            if (!fields || !PyMapping_Check(fields)) {  /* Use PyMapping_Check, not PyDict_Check */
+            if (!fields || !PyMapping_Check(fields)) {
                 Py_DECREF(names);
                 Py_XDECREF(fields);
                 PyErr_Clear();
@@ -378,8 +370,7 @@ static int _is_soa_compatible_dtype(PyArray_Descr* fd) {
 
             for (Py_ssize_t i = 0; i < num_names && result; i++) {
                 PyObject* fname = PyTuple_GET_ITEM(names, i);
-                /* Use PyObject_GetItem instead of PyDict_GetItem */
-                PyObject* info = PyObject_GetItem(fields, fname);  /* new ref */
+                PyObject* info = PyObject_GetItem(fields, fname);
 
                 if (!info || !PyTuple_Check(info) || PyTuple_GET_SIZE(info) < 1) {
                     Py_XDECREF(info);
@@ -399,9 +390,6 @@ static int _is_soa_compatible_dtype(PyArray_Descr* fd) {
 
         Py_XDECREF(names);
         PyErr_Clear();
-
-        /* Unknown void type */
-        return 0;
     }
 
     return 0;
@@ -410,18 +398,10 @@ static int _is_soa_compatible_dtype(PyArray_Descr* fd) {
 /* Check if numpy array is a structured array suitable for SOA encoding */
 static int _can_encode_as_soa(PyArrayObject* arr) {
     PyArray_Descr* dtype = PyArray_DESCR(arr);
-
-    /* Check if this is a structured dtype by looking at names */
     PyObject* names = PyObject_GetAttrString((PyObject*)dtype, "names");
 
-    if (!names || names == Py_None) {
+    if (!names || names == Py_None || !PyTuple_Check(names)) {
         Py_XDECREF(names);
-        PyErr_Clear();
-        return 0;
-    }
-
-    if (!PyTuple_Check(names)) {
-        Py_DECREF(names);
         PyErr_Clear();
         return 0;
     }
@@ -442,20 +422,11 @@ static int _can_encode_as_soa(PyArrayObject* arr) {
         return 0;
     }
 
-    /* fields can be a dict or mappingproxy - use PyMapping_Check */
-    if (!PyMapping_Check(fields)) {
-        Py_DECREF(names);
-        Py_DECREF(fields);
-        return 0;
-    }
-
     int result = 1;
 
     for (Py_ssize_t i = 0; i < num_names && result; i++) {
         PyObject* fname = PyTuple_GET_ITEM(names, i);
-
-        /* Use PyObject_GetItem which works with any mapping (including mappingproxy) */
-        PyObject* info = PyObject_GetItem(fields, fname);  /* new ref */
+        PyObject* info = PyObject_GetItem(fields, fname);
 
         if (!info || !PyTuple_Check(info) || PyTuple_GET_SIZE(info) < 1) {
             Py_XDECREF(info);
@@ -473,9 +444,29 @@ static int _can_encode_as_soa(PyArrayObject* arr) {
     return result;
 }
 
-/*
- * New helper function: Write schema for a field recursively (handles nested structs)
- */
+/* Helper: encode a field name (UTF-8 string with length prefix) */
+static int _encode_field_name(PyObject* name, _bjdata_encoder_buffer_t* buffer) {
+    PyObject* encoded = PyUnicode_AsEncodedString(name, "utf-8", NULL);
+
+    if (!encoded) {
+        return 1;
+    }
+
+    int ret = _encode_longlong(PyBytes_GET_SIZE(encoded), buffer);
+
+    if (ret == 0) {
+        WRITE_OR_BAIL(PyBytes_AS_STRING(encoded), PyBytes_GET_SIZE(encoded));
+    }
+
+    Py_DECREF(encoded);
+    return ret;
+
+bail:
+    Py_DECREF(encoded);
+    return 1;
+}
+
+/* Write schema for a field recursively (handles nested structs) */
 static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buffer_t* buffer) {
     int type_num = fd->type_num;
     Py_ssize_t i;
@@ -507,8 +498,7 @@ static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buff
                 for (i = 0; i < num_elem; i++) {
                     WRITE_CHAR_OR_BAIL(TYPE_BOOL_TRUE);
                 }
-            } else if (base_type == NPY_UNICODE || base_type == NPY_STRING) {
-                /* For sub-array of strings, write character type marker */
+            } else if (_is_string_type(base_type)) {
                 for (i = 0; i < num_elem; i++) {
                     WRITE_CHAR_OR_BAIL(TYPE_CHAR);
                 }
@@ -539,24 +529,14 @@ static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buff
             PyObject* fields = PyObject_GetAttrString((PyObject*)fd, "fields");
 
             if (fields && PyMapping_Check(fields)) {
-                /* Write nested struct schema: {name1:type1, name2:type2, ...} */
                 WRITE_CHAR_OR_BAIL(OBJECT_START);
 
                 Py_ssize_t nf = PyTuple_GET_SIZE(names);
 
                 for (i = 0; i < nf; i++) {
                     PyObject* nm = PyTuple_GET_ITEM(names, i);
-                    PyObject* nm_enc = PyUnicode_AsEncodedString(nm, "utf-8", NULL);
 
-                    if (!nm_enc) {
-                        Py_DECREF(fields);
-                        Py_DECREF(names);
-                        goto bail;
-                    }
-
-                    BAIL_ON_NONZERO(_encode_longlong(PyBytes_GET_SIZE(nm_enc), buffer));
-                    WRITE_OR_BAIL(PyBytes_AS_STRING(nm_enc), PyBytes_GET_SIZE(nm_enc));
-                    Py_DECREF(nm_enc);
+                    BAIL_ON_NONZERO(_encode_field_name(nm, buffer));
 
                     PyObject* info = PyObject_GetItem(fields, nm);
 
@@ -594,11 +574,7 @@ static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buff
     }
 
     /* String types - write NUMPY BYTE SIZE (not character count) */
-    /* For raw numpy bytes encoding, we write the actual itemsize */
-    if (type_num == NPY_UNICODE || type_num == NPY_STRING) {
-        /* fd->elsize is the numpy byte size */
-        /* For unicode: elsize = char_count * 4 (UCS-4) */
-        /* We write elsize so decoder knows how many bytes to read */
+    if (_is_string_type(type_num)) {
         WRITE_CHAR_OR_BAIL(TYPE_STRING);
         BAIL_ON_NONZERO(_encode_longlong(fd->elsize, buffer));
         return 0;
@@ -623,6 +599,46 @@ static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buff
 
 bail:
     return 1;
+}
+
+/* Helper to write index value with specified byte size */
+static int _write_index_value(Py_ssize_t idx, int size, _bjdata_encoder_buffer_t* buffer) {
+    char buf[8];
+    int le = buffer->prefs.islittle;
+
+    if (size == 1) {
+        buf[0] = (char)idx;
+        WRITE_OR_BAIL(buf, 1);
+    } else if (size == 2) {
+        buf[le ? 0 : 1] = idx & 0xFF;
+        buf[le ? 1 : 0] = (idx >> 8) & 0xFF;
+        WRITE_OR_BAIL(buf, 2);
+    } else {
+        for (int i = 0; i < 4; i++) {
+            buf[le ? i : 3 - i] = (idx >> (8 * i)) & 0xFF;
+        }
+
+        WRITE_OR_BAIL(buf, 4);
+    }
+
+    return 0;
+
+bail:
+    return 1;
+}
+
+/* Determine the smallest index type for a given count */
+static inline void _get_index_type(Py_ssize_t count, int* size, char* marker) {
+    if (count <= 255) {
+        *size = 1;
+        *marker = TYPE_UINT8;
+    } else if (count <= 65535) {
+        *size = 2;
+        *marker = TYPE_UINT16;
+    } else {
+        *size = 4;
+        *marker = TYPE_UINT32;
+    }
 }
 
 /* Analyze string field to determine best encoding */
@@ -678,15 +694,10 @@ static int _analyze_string_field(PyArrayObject* flat, PyObject* field_name,
         }
 
         Py_ssize_t len = PyBytes_GET_SIZE(utf8);
-
-        if (len > max_len) {
-            max_len = len;
-        }
-
+        max_len = (len > max_len) ? len : max_len;
         total_len += len;
         Py_DECREF(utf8);
 
-        /* Add to unique set */
         PySet_Add(unique_set, val);
         Py_DECREF(val);
     }
@@ -698,20 +709,19 @@ static int _analyze_string_field(PyArrayObject* flat, PyObject* field_name,
     /* Force offset if threshold is exactly 0 */
     if (threshold == 0.0) {
         info->encoding = SOA_STRING_OFFSET;
-        info->index_size = (total_len <= 255) ? 1 : ((total_len <= 65535) ? 2 : 4);
-        info->index_marker = (info->index_size == 1) ? TYPE_UINT8 :
-                             ((info->index_size == 2) ? TYPE_UINT16 : TYPE_UINT32);
+        _get_index_type(total_len, &info->index_size, &info->index_marker);
         Py_DECREF(unique_set);
         return 0;
     }
 
     /* Calculate costs */
     double thresh = (threshold > 0) ? threshold : 0.3;
-
     Py_ssize_t fixed_cost = max_len * count;
 
     /* Dict cost: indices + dictionary overhead */
-    int idx_size = (num_unique <= 255) ? 1 : ((num_unique <= 65535) ? 2 : 4);
+    int idx_size;
+    char idx_marker;
+    _get_index_type(num_unique, &idx_size, &idx_marker);
 
     /* Calculate dict strings total length */
     Py_ssize_t dict_strings_total = 0;
@@ -732,23 +742,23 @@ static int _analyze_string_field(PyArrayObject* flat, PyObject* field_name,
     Py_ssize_t dict_cost = idx_size * count + dict_strings_total + num_unique * 2;
 
     /* Offset cost */
-    int off_size = (total_len <= 255) ? 1 : ((total_len <= 65535) ? 2 : 4);
+    int off_size;
+    char off_marker;
+    _get_index_type(total_len, &off_size, &off_marker);
     Py_ssize_t offset_cost = idx_size * count + (count + 1) * off_size + total_len;
 
     /* Choose encoding */
     if (num_unique <= (Py_ssize_t)(count * thresh) && dict_cost < fixed_cost && dict_cost < offset_cost) {
         info->encoding = SOA_STRING_DICT;
-        info->dict_list = unique_list;  /* Transfer ownership */
+        info->dict_list = unique_list;
         unique_list = NULL;
         info->dict_count = num_unique;
         info->index_size = idx_size;
-        info->index_marker = (idx_size == 1) ? TYPE_UINT8 :
-                             ((idx_size == 2) ? TYPE_UINT16 : TYPE_UINT32);
+        info->index_marker = idx_marker;
     } else if (max_len > 32 && offset_cost < fixed_cost) {
         info->encoding = SOA_STRING_OFFSET;
         info->index_size = off_size;
-        info->index_marker = (off_size == 1) ? TYPE_UINT8 :
-                             ((off_size == 2) ? TYPE_UINT16 : TYPE_UINT32);
+        info->index_marker = off_marker;
     } else {
         info->encoding = SOA_STRING_FIXED;
     }
@@ -772,7 +782,6 @@ static int _write_string_schema(_string_field_info_t* info, _bjdata_encoder_buff
         BAIL_ON_NONZERO(_encode_longlong(info->fixed_len, buffer));
 
     } else if (info->encoding == SOA_STRING_DICT) {
-        /* [$S#<count><str1><str2>... */
         char hdr[] = {ARRAY_START, CONTAINER_TYPE, TYPE_STRING, CONTAINER_COUNT};
         WRITE_OR_BAIL(hdr, 4);
         BAIL_ON_NONZERO(_encode_longlong(info->dict_count, buffer));
@@ -791,7 +800,6 @@ static int _write_string_schema(_string_field_info_t* info, _bjdata_encoder_buff
         }
 
     } else {  /* SOA_STRING_OFFSET */
-        /* [$<int_type>] */
         char hdr[] = {ARRAY_START, CONTAINER_TYPE, info->index_marker, ARRAY_END};
         WRITE_OR_BAIL(hdr, 4);
     }
@@ -811,18 +819,26 @@ static int _write_string_value(PyObject* str_val, _string_field_info_t* info,
         return 1;
     }
 
+    int ret = 0;
+
     if (info->encoding == SOA_STRING_FIXED) {
         Py_ssize_t len = PyBytes_GET_SIZE(utf8);
         Py_ssize_t write_len = (len < info->fixed_len) ? len : info->fixed_len;
-        WRITE_OR_BAIL(PyBytes_AS_STRING(utf8), write_len);
 
-        /* Pad with zeros */
-        for (Py_ssize_t p = len; p < info->fixed_len; p++) {
-            WRITE_CHAR_OR_BAIL('\0');
+        if (_encoder_buffer_write(buffer, PyBytes_AS_STRING(utf8), write_len) != 0) {
+            ret = 1;
+        } else {
+            /* Pad with zeros */
+            for (Py_ssize_t p = len; p < info->fixed_len && ret == 0; p++) {
+                char zero = '\0';
+
+                if (_encoder_buffer_write(buffer, &zero, 1) != 0) {
+                    ret = 1;
+                }
+            }
         }
 
     } else if (info->encoding == SOA_STRING_DICT) {
-        /* Find index in dictionary */
         Py_ssize_t idx = PySequence_Index(info->dict_list, str_val);
 
         if (idx < 0) {
@@ -830,45 +846,25 @@ static int _write_string_value(PyObject* str_val, _string_field_info_t* info,
             idx = 0;
         }
 
-        BAIL_ON_NONZERO(_write_index_value(idx, info->index_size, buffer));
+        ret = _write_index_value(idx, info->index_size, buffer);
 
     } else {  /* SOA_STRING_OFFSET */
-        /* Write record index (actual string written later) */
-        BAIL_ON_NONZERO(_write_index_value(record_index, info->index_size, buffer));
+        ret = _write_index_value(record_index, info->index_size, buffer);
     }
 
     Py_DECREF(utf8);
-    return 0;
-
-bail:
-    Py_XDECREF(utf8);
-    return 1;
+    return ret;
 }
 
-/* Helper to write index value */
-static int _write_index_value(Py_ssize_t idx, int size, _bjdata_encoder_buffer_t* buffer) {
-    char buf[4];
-    int le = buffer->prefs.islittle;
-
-    if (size == 1) {
-        buf[0] = (char)idx;
-        WRITE_OR_BAIL(buf, 1);
-    } else if (size == 2) {
-        buf[le ? 0 : 1] = idx & 0xFF;
-        buf[le ? 1 : 0] = (idx >> 8) & 0xFF;
-        WRITE_OR_BAIL(buf, 2);
-    } else {
-        for (int i = 0; i < 4; i++) {
-            buf[le ? i : 3 - i] = (idx >> (8 * i)) & 0xFF;
-        }
-
-        WRITE_OR_BAIL(buf, 4);
+/* Get field value from a record (handles both tuple and object access) */
+static PyObject* _get_field_value(PyObject* rec, PyObject* field_name, Py_ssize_t field_index) {
+    if (PyTuple_Check(rec)) {
+        PyObject* val = PyTuple_GET_ITEM(rec, field_index);
+        Py_INCREF(val);
+        return val;
     }
 
-    return 0;
-
-bail:
-    return 1;
+    return PyObject_GetItem(rec, field_name);
 }
 
 /* Encode numpy structured array as SOA format */
@@ -884,8 +880,8 @@ static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int
     Py_ssize_t* field_offset = NULL;
     Py_ssize_t* field_itemsize = NULL;
     int* field_type = NULL;  /* 0=numeric, 1=bool, 2=string */
-    _string_field_info_t* str_info = NULL;  /* String field analysis */
-    PyObject** str_values = NULL;  /* Cached string values for offset encoding */
+    _string_field_info_t* str_info = NULL;
+    PyObject** str_values = NULL;
 
     BAIL_ON_NULL(names = PyObject_GetAttrString((PyObject*)dtype, "names"));
     BAIL_ON_NULL(fields = PyObject_GetAttrString((PyObject*)dtype, "fields"));
@@ -925,11 +921,10 @@ static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int
         int type_num = fd->type_num;
 
         if (type_num == NPY_BOOL) {
-            field_type[i] = 1;  /* Bool */
-        } else if (type_num == NPY_UNICODE || type_num == NPY_STRING) {
-            field_type[i] = 2;  /* String */
+            field_type[i] = 1;
+        } else if (_is_string_type(type_num)) {
+            field_type[i] = 2;
 
-            /* Analyze string field */
             if (_analyze_string_field(flat, fname, i, count, threshold, &str_info[i]) < 0) {
                 Py_DECREF(info);
                 goto bail;
@@ -952,15 +947,7 @@ static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int
                         goto bail;
                     }
 
-                    PyObject* val = NULL;
-
-                    if (PyTuple_Check(rec)) {
-                        val = PyTuple_GET_ITEM(rec, i);
-                        Py_INCREF(val);
-                    } else {
-                        val = PyObject_GetItem(rec, fname);
-                    }
-
+                    PyObject* val = _get_field_value(rec, fname, i);
                     Py_DECREF(rec);
 
                     if (!val) {
@@ -968,11 +955,11 @@ static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int
                         goto bail;
                     }
 
-                    PyList_SET_ITEM(str_values[i], j, val);  /* Steals ref */
+                    PyList_SET_ITEM(str_values[i], j, val);
                 }
             }
         } else {
-            field_type[i] = 0;  /* Numeric/other */
+            field_type[i] = 0;
         }
 
         Py_DECREF(info);
@@ -986,21 +973,11 @@ static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int
     /* Write schema */
     for (i = 0; i < nf; i++) {
         PyObject* nm = PyTuple_GET_ITEM(names, i);
-        PyObject* nm_enc = PyUnicode_AsEncodedString(nm, "utf-8", NULL);
-
-        if (!nm_enc) {
-            goto bail;
-        }
-
-        BAIL_ON_NONZERO(_encode_longlong(PyBytes_GET_SIZE(nm_enc), buffer));
-        WRITE_OR_BAIL(PyBytes_AS_STRING(nm_enc), PyBytes_GET_SIZE(nm_enc));
-        Py_DECREF(nm_enc);
+        BAIL_ON_NONZERO(_encode_field_name(nm, buffer));
 
         if (field_type[i] == 2) {
-            /* String: write appropriate schema */
             BAIL_ON_NONZERO(_write_string_schema(&str_info[i], buffer));
         } else {
-            /* Non-string: use recursive schema writer */
             PyObject* info = PyObject_GetItem(fields, nm);
 
             if (!info) {
@@ -1037,28 +1014,19 @@ static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int
     /* Write payload */
 #define WRITE_FIELD(fi, ri) do { \
         if (field_type[fi] == 1) { \
-            /* Bool */ \
             void* ptr = (char*)PyArray_GETPTR1(flat, ri) + field_offset[fi]; \
             WRITE_CHAR_OR_BAIL(*((npy_bool*)ptr) ? TYPE_BOOL_TRUE : TYPE_BOOL_FALSE); \
         } else if (field_type[fi] == 2) { \
-            /* String */ \
             PyObject* fname = PyTuple_GET_ITEM(names, fi); \
             PyObject* rec = PyArray_GETITEM(flat, PyArray_GETPTR1(flat, ri)); \
             if (!rec) goto bail; \
-            PyObject* val = NULL; \
-            if (PyTuple_Check(rec)) { \
-                val = PyTuple_GET_ITEM(rec, fi); \
-                Py_INCREF(val); \
-            } else { \
-                val = PyObject_GetItem(rec, fname); \
-            } \
+            PyObject* val = _get_field_value(rec, fname, fi); \
             Py_DECREF(rec); \
             if (!val) goto bail; \
             int ret = _write_string_value(val, &str_info[fi], ri, buffer); \
             Py_DECREF(val); \
             if (ret != 0) goto bail; \
         } else { \
-            /* Numeric/other: raw bytes */ \
             void* ptr = (char*)PyArray_GETPTR1(flat, ri) + field_offset[fi]; \
             WRITE_OR_BAIL((char*)ptr, field_itemsize[fi]); \
         } \
@@ -1149,18 +1117,9 @@ bail:
         free(str_values);
     }
 
-    if (field_offset) {
-        free(field_offset);
-    }
-
-    if (field_itemsize) {
-        free(field_itemsize);
-    }
-
-    if (field_type) {
-        free(field_type);
-    }
-
+    free(field_offset);
+    free(field_itemsize);
+    free(field_type);
     Py_XDECREF(names);
     Py_XDECREF(fields);
     Py_XDECREF((PyObject*)flat);
@@ -1185,16 +1144,9 @@ static int _encode_NDarray(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
     /* Check if this is a structured array */
     if (type == NPY_VOID) {
         /* Try SOA encoding for structured arrays */
-        if (buffer->prefs.soa_format != SOA_FORMAT_NONE && _can_encode_as_soa(arr)) {
+        if (_can_encode_as_soa(arr)) {
             int is_row_major = (buffer->prefs.soa_format == SOA_FORMAT_ROW);
             int result = _encode_soa(arr, buffer, is_row_major);
-            Py_DECREF(arr);
-            return result;
-        }
-
-        /* Auto-enable column-major SOA for simple structured arrays */
-        if (buffer->prefs.soa_format == SOA_FORMAT_NONE && _can_encode_as_soa(arr)) {
-            int result = _encode_soa(arr, buffer, 0);  /* 0 = column-major */
             Py_DECREF(arr);
             return result;
         }
