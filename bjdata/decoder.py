@@ -388,6 +388,7 @@ def __decode_soa_schema(fp_read, intern_object_keys, le):
         - Fixed-length string: S<int><length>
         - Dictionary-based string: [$S#<n><str1><str2>...
         - Offset-table-based string: [$<int-type>]
+        - Fixed-size array: [<type><type>...] (repeated markers)
     """
     schema = []
     marker = fp_read(1)
@@ -397,14 +398,10 @@ def __decode_soa_schema(fp_read, intern_object_keys, le):
             marker = fp_read(1)
             continue
 
-        # Decode field name
         field_name = __decode_object_key(fp_read, marker, intern_object_keys, le)
-
-        # Decode field type marker
         type_marker = fp_read(1)
 
         if type_marker in __TYPES_FIXLEN:
-            # Fixed-length numeric type
             schema.append(
                 {
                     "name": field_name,
@@ -414,15 +411,12 @@ def __decode_soa_schema(fp_read, intern_object_keys, le):
                 }
             )
         elif type_marker in (TYPE_BOOL_TRUE, TYPE_BOOL_FALSE):
-            # Boolean type (1 byte: T or F in payload)
             schema.append(
                 {"name": field_name, "type": "bool", "marker": type_marker, "bytes": 1}
             )
         elif type_marker == TYPE_NULL:
-            # Null/placeholder (0 bytes in payload)
             schema.append({"name": field_name, "type": "null", "bytes": 0})
-        elif type_marker in (TYPE_STRING, TYPE_HIGH_PREC):
-            # Fixed-length string: S<int><length>
+        elif type_marker == TYPE_STRING:
             length_marker = fp_read(1)
             if length_marker not in __TYPES_INT:
                 raise DecoderException("SOA schema only supports fixed-length types")
@@ -435,246 +429,357 @@ def __decode_soa_schema(fp_read, intern_object_keys, le):
                     "bytes": length,
                 }
             )
+        elif type_marker == OBJECT_START:
+            nested = __decode_soa_schema(fp_read, intern_object_keys, le)
+            schema.append(
+                {
+                    "name": field_name,
+                    "type": "nested",
+                    "schema": nested,
+                    "bytes": sum(f["bytes"] for f in nested),
+                }
+            )
         elif type_marker == ARRAY_START:
-            # Dictionary or offset-based string encoding
-            next_marker = fp_read(1)
-            if next_marker == CONTAINER_TYPE:
-                inner = fp_read(1)
-                if inner in (TYPE_STRING, TYPE_HIGH_PREC):
-                    # Dictionary-based string: [$S#<n><str1><str2>...
-                    if fp_read(1) != CONTAINER_COUNT:
-                        raise DecoderException("Expected # in dict-string schema")
-                    dict_count = __decode_int_non_negative(fp_read, fp_read(1), le)
-                    dictionary = []
-                    for _ in range(dict_count):
-                        str_len = __decode_int_non_negative(fp_read, fp_read(1), le)
-                        dictionary.append(fp_read(str_len).decode("utf-8"))
-                    # Index size based on dictionary size
-                    idx_bytes = (
-                        1 if dict_count <= 255 else (2 if dict_count <= 65535 else 4)
-                    )
-                    idx_marker = (
-                        TYPE_UINT8
-                        if idx_bytes == 1
-                        else (TYPE_UINT16 if idx_bytes == 2 else TYPE_UINT32)
-                    )
-                    schema.append(
-                        {
-                            "name": field_name,
-                            "type": "string",
-                            "encoding": "dict",
-                            "bytes": idx_bytes,
-                            "dict": dictionary,
-                            "index_marker": idx_marker,
-                        }
-                    )
-                elif inner in __TYPES_INT:
-                    # Offset-table-based string: [$<int-type>]
-                    if fp_read(1) != ARRAY_END:
-                        raise DecoderException("Expected ] in offset-string schema")
-                    schema.append(
-                        {
-                            "name": field_name,
-                            "type": "string",
-                            "encoding": "offset",
-                            "bytes": __DTYPELEN_MAP[inner],
-                            "index_marker": inner,
-                        }
-                    )
-                else:
-                    raise DecoderException(
-                        "SOA schema only supports fixed-length types"
-                    )
-            else:
-                raise DecoderException("SOA schema only supports fixed-length types")
+            schema.append(__decode_array_or_string_schema(fp_read, field_name, le))
         else:
-            raise DecoderException("SOA schema only supports fixed-length types")
+            raise DecoderException("Unsupported SOA schema type")
 
         marker = fp_read(1)
 
     return schema
 
 
+def __decode_array_or_string_schema(fp_read, field_name, le):
+    """Decode array schema: fixed array [TTT], dict [$S#...], or offset [$U]."""
+    next_marker = fp_read(1)
+
+    if next_marker == CONTAINER_TYPE:
+        inner = fp_read(1)
+        if inner == TYPE_STRING:
+            if fp_read(1) != CONTAINER_COUNT:
+                raise DecoderException("Expected # in dict-string schema")
+            dict_count = __decode_int_non_negative(fp_read, fp_read(1), le)
+            dictionary = []
+            for _ in range(dict_count):
+                str_len = __decode_int_non_negative(fp_read, fp_read(1), le)
+                dictionary.append(fp_read(str_len).decode("utf-8"))
+            idx_bytes = 1 if dict_count <= 255 else (2 if dict_count <= 65535 else 4)
+            idx_marker = (
+                TYPE_UINT8
+                if idx_bytes == 1
+                else (TYPE_UINT16 if idx_bytes == 2 else TYPE_UINT32)
+            )
+            return {
+                "name": field_name,
+                "type": "string",
+                "encoding": "dict",
+                "bytes": idx_bytes,
+                "dict": dictionary,
+                "index_marker": idx_marker,
+            }
+        elif inner in __TYPES_INT:
+            if fp_read(1) != ARRAY_END:
+                raise DecoderException("Expected ] in offset-string schema")
+            return {
+                "name": field_name,
+                "type": "string",
+                "encoding": "offset",
+                "bytes": __DTYPELEN_MAP[inner],
+                "index_marker": inner,
+            }
+        else:
+            raise DecoderException("Unsupported array schema type")
+    elif next_marker in __TYPES_FIXLEN or next_marker in (
+        TYPE_BOOL_TRUE,
+        TYPE_BOOL_FALSE,
+    ):
+        elem_marker = next_marker
+        elem_count = 1
+        m = fp_read(1)
+        while m != ARRAY_END:
+            if m != elem_marker:
+                raise DecoderException("Mixed types in fixed array not supported")
+            elem_count += 1
+            m = fp_read(1)
+        is_bool = elem_marker in (TYPE_BOOL_TRUE, TYPE_BOOL_FALSE)
+        return {
+            "name": field_name,
+            "type": "array",
+            "marker": elem_marker,
+            "count": elem_count,
+            "elem_type": "bool" if is_bool else "numeric",
+            "bytes": elem_count * (1 if is_bool else __DTYPELEN_MAP[elem_marker]),
+        }
+    else:
+        raise DecoderException("Unsupported array schema type")
+
+
 def __decode_soa_field_value(field, raw, record_index, le):
-    """Decode a single field value from raw payload bytes.
-
-    Args:
-        field: Field schema dictionary
-        raw: Raw bytes for this field
-        record_index: Index of current record (for offset-based strings)
-        le: Little-endian flag
-
-    Returns:
-        Decoded field value
-    """
+    """Decode a single field value from raw bytes."""
     ftype = field["type"]
 
     if ftype == "numeric":
-        marker = field["marker"]
-        if marker in (TYPE_BOOL_TRUE, TYPE_BOOL_FALSE):
-            return raw[0:1] == TYPE_BOOL_TRUE
-        elif marker in __NUMPY_DTYPE_MAP:
-            return buffer2numpy(raw, dtype=npdtype(__NUMPY_DTYPE_MAP[marker]))[0]
+        return buffer2numpy(raw, dtype=npdtype(__NUMPY_DTYPE_MAP[field["marker"]]))[0]
     elif ftype == "bool":
         return raw[0:1] == TYPE_BOOL_TRUE
     elif ftype == "null":
         return None
+    elif ftype == "array":
+        if field["elem_type"] == "bool":
+            return ndarray(
+                [raw[i : i + 1] == TYPE_BOOL_TRUE for i in range(field["count"])]
+            )
+        return buffer2numpy(raw, dtype=npdtype(__NUMPY_DTYPE_MAP[field["marker"]]))
+    elif ftype == "nested":
+        result = {}
+        offset = 0
+        for f in field["schema"]:
+            result[f["name"]] = __decode_soa_field_value(
+                f, raw[offset : offset + f["bytes"]], record_index, le
+            )
+            offset += f["bytes"]
+        return result
     elif ftype == "string":
-        encoding = field["encoding"]
-        if encoding == "fixed":
-            # Strip null padding and decode
+        enc = field["encoding"]
+        if enc == "fixed":
             return raw.rstrip(b"\x00").decode("utf-8")
-        elif encoding == "dict":
-            # Look up in dictionary
-            idx_marker = field["index_marker"]
-            idx = buffer2numpy(raw, dtype=npdtype(__NUMPY_DTYPE_MAP[idx_marker]))[
-                0
-            ].item()
+        elif enc == "dict":
+            idx = buffer2numpy(
+                raw, dtype=npdtype(__NUMPY_DTYPE_MAP[field["index_marker"]])
+            )[0].item()
             return field["dict"][idx]
-        elif encoding == "offset":
-            # Use offset table
-            idx_marker = field["index_marker"]
-            idx = buffer2numpy(raw, dtype=npdtype(__NUMPY_DTYPE_MAP[idx_marker]))[
-                0
-            ].item()
-            offsets = field["offsets"]
-            return field["string_buffer"][offsets[idx] : offsets[idx + 1]]
-
+        elif enc == "offset":
+            idx = buffer2numpy(
+                raw, dtype=npdtype(__NUMPY_DTYPE_MAP[field["index_marker"]])
+            )[0].item()
+            return field["string_buffer"][
+                field["offsets"][idx] : field["offsets"][idx + 1]
+            ]
     return None
 
 
+def __schema_to_dtype(schema):
+    """Build numpy dtype from SOA schema."""
+    dtype_list = []
+    for f in schema:
+        fname = f["name"]
+        ftype = f["type"]
+        if ftype == "numeric":
+            dtype_list.append((fname, __NUMPY_DTYPE_MAP[f["marker"]]))
+        elif ftype == "bool":
+            dtype_list.append((fname, "?"))
+        elif ftype == "null":
+            dtype_list.append((fname, "O"))
+        elif ftype == "array":
+            dt = "?" if f["elem_type"] == "bool" else __NUMPY_DTYPE_MAP[f["marker"]]
+            dtype_list.append((fname, dt, (f["count"],)))
+        elif ftype == "nested":
+            dtype_list.append((fname, __schema_to_dtype(f["schema"])))
+        elif ftype == "string" and f["encoding"] == "fixed":
+            dtype_list.append((fname, "U" + str(f["bytes"])))
+    return npdtype(dtype_list)
+
+
 def __decode_soa(fp_read, schema, is_row_major, intern_object_keys, le):
-    """Decode SOA payload into numpy structured array.
-
-    Supports both row-major (interleaved) and column-major (columnar) layouts,
-    with all string encoding types (fixed, dict, offset).
-    """
-    # Read count (can be scalar or ND dimensions)
-    marker = fp_read(1)
-    if marker != CONTAINER_COUNT:
+    """Decode SOA payload into numpy structured array."""
+    if fp_read(1) != CONTAINER_COUNT:
         raise DecoderException("Expected # after SOA schema")
-
     marker = fp_read(1)
     if marker == ARRAY_START:
-        # ND dimensions
         dims = []
-        marker = fp_read(1)
-        while marker != ARRAY_END:
-            if marker in __TYPES_INT:
-                dims.append(__METHOD_MAP[marker](fp_read, marker, le))
-            marker = fp_read(1)
+        m = fp_read(1)
+        while m != ARRAY_END:
+            dims.append(__METHOD_MAP[m](fp_read, m, le))
+            m = fp_read(1)
         count = prodlist(dims)
     else:
-        # Scalar count
         count = __decode_int_non_negative(fp_read, marker, le)
         dims = [count]
-
-    # Calculate record size
     record_bytes = sum(f["bytes"] for f in schema)
-
-    # Read payload
     payload = fp_read(record_bytes * count)
+    __read_offset_tables(fp_read, schema, count, le)
 
-    # Read deferred offset tables and string buffers for offset-based fields
-    offset_fields = [f for f in schema if f.get("encoding") == "offset"]
-    for field in offset_fields:
-        idx_bytes = field["bytes"]
-        idx_marker = field["index_marker"]
-        # Read offset table (count + 1 entries)
-        offsets = []
-        for _ in range(count + 1):
-            offsets.append(__METHOD_MAP[idx_marker](fp_read, idx_marker, le))
-        field["offsets"] = offsets
-        # Read string buffer
-        buffer_len = offsets[-1] if offsets else 0
-        field["string_buffer"] = (
-            fp_read(buffer_len).decode("utf-8") if buffer_len > 0 else ""
+    # Convert variable strings through dict intermediate, then to numpy
+    if __has_variable_strings(schema):
+        records = __decode_soa_to_dicts(
+            payload, schema, count, record_bytes, is_row_major, le
         )
+        return __dicts_to_numpy(records, schema, dims)
 
-    # Check if we have any string fields (need list of dicts) or can use numpy
-    has_variable_strings = any(f.get("encoding") in ("dict", "offset") for f in schema)
+    result = npempty(count, dtype=__schema_to_dtype(schema))
+    __fill_numpy_result(result, payload, schema, count, record_bytes, is_row_major, le)
+    if len(dims) > 1:
+        result = result.reshape(dims)
+    return result
 
-    # Build numpy dtype for structured array if possible
-    if not has_variable_strings:
-        dtype_list = []
-        for field in schema:
-            if field["type"] == "numeric":
-                marker = field["marker"]
-                if marker in (TYPE_BOOL_TRUE, TYPE_BOOL_FALSE):
-                    dtype_list.append((field["name"], "?"))
-                else:
-                    dtype_list.append((field["name"], __NUMPY_DTYPE_MAP[marker]))
-            elif field["type"] == "bool":
-                dtype_list.append((field["name"], "?"))
-            elif field["type"] == "null":
-                # No good numpy equivalent, fall back to object
-                dtype_list.append((field["name"], "O"))
-            elif field["type"] == "string" and field["encoding"] == "fixed":
-                # Fixed-length string
-                dtype_list.append((field["name"], f'U{field["bytes"]}'))
 
-        # Create numpy structured array
-        struct_dtype = npdtype(dtype_list)
-        result = npempty(count, dtype=struct_dtype)
+def __read_offset_tables(fp_read, schema, count, le):
+    """Recursively read offset tables for offset-based string fields."""
+    for f in schema:
+        if f.get("encoding") == "offset":
+            f["offsets"] = []
+            for _ in range(count + 1):
+                f["offsets"].append(
+                    __METHOD_MAP[f["index_marker"]](fp_read, f["index_marker"], le)
+                )
+            buf_len = f["offsets"][-1] if f["offsets"] else 0
+            f["string_buffer"] = fp_read(buf_len).decode("utf-8") if buf_len else ""
+        elif f.get("type") == "nested":
+            __read_offset_tables(fp_read, f["schema"], count, le)
 
-        # Fill in values
+
+def __has_variable_strings(schema):
+    """Check if schema has dict/offset strings."""
+    for f in schema:
+        if f.get("type") == "string" and f.get("encoding") in ("dict", "offset"):
+            return True
+        if f.get("type") == "nested" and __has_variable_strings(f["schema"]):
+            return True
+    return False
+
+
+def __fill_numpy_result(result, payload, schema, count, record_bytes, is_row_major, le):
+    """Fill numpy structured array from payload."""
+    if is_row_major:
         for i in range(count):
-            if is_row_major:
-                base_offset = i * record_bytes
-                field_offset = 0
-            else:
-                col_offset = 0
+            base = i * record_bytes
+            offset = 0
+            for f in schema:
+                __set_field_value(
+                    result,
+                    f["name"],
+                    f,
+                    i,
+                    payload[base + offset : base + offset + f["bytes"]],
+                    le,
+                )
+                offset += f["bytes"]
+    else:
+        col_offset = 0
+        for f in schema:
+            for i in range(count):
+                offset = col_offset + i * f["bytes"]
+                __set_field_value(
+                    result, f["name"], f, i, payload[offset : offset + f["bytes"]], le
+                )
+            col_offset += f["bytes"] * count
 
-            for field in schema:
-                if is_row_major:
-                    raw = payload[
-                        base_offset
-                        + field_offset : base_offset
-                        + field_offset
-                        + field["bytes"]
-                    ]
-                    field_offset += field["bytes"]
-                else:
-                    field_offset = col_offset + i * field["bytes"]
-                    raw = payload[field_offset : field_offset + field["bytes"]]
-                    col_offset += field["bytes"] * count
 
-                result[field["name"]][i] = __decode_soa_field_value(field, raw, i, le)
+def __set_field_value(result, name, field, index, raw, le):
+    """Set a field value in numpy result, handling nested structs."""
+    if field["type"] == "nested":
+        offset = 0
+        for f in field["schema"]:
+            __set_field_value(
+                result[name], f["name"], f, index, raw[offset : offset + f["bytes"]], le
+            )
+            offset += f["bytes"]
+    else:
+        result[name][index] = __decode_soa_field_value(field, raw, index, le)
 
-        # Reshape if ND
-        if len(dims) > 1:
-            result = result.reshape(dims)
 
-        return result
-
-    # Fall back to list of dicts for variable-length strings
+def __decode_soa_to_dicts(payload, schema, count, record_bytes, is_row_major, le):
+    """Decode SOA to list of dicts (for variable-length strings)."""
     records = []
     for i in range(count):
         record = {}
         if is_row_major:
-            # Row-major: all fields of record i are contiguous
-            base_offset = i * record_bytes
-            field_offset = 0
-            for field in schema:
-                raw = payload[
-                    base_offset
-                    + field_offset : base_offset
-                    + field_offset
-                    + field["bytes"]
-                ]
-                record[field["name"]] = __decode_soa_field_value(field, raw, i, le)
-                field_offset += field["bytes"]
+            base = i * record_bytes
+            offset = 0
+            for f in schema:
+                record[f["name"]] = __decode_soa_field_value(
+                    f, payload[base + offset : base + offset + f["bytes"]], i, le
+                )
+                offset += f["bytes"]
         else:
-            # Column-major: all values of field j are contiguous
             col_offset = 0
-            for field in schema:
-                field_offset = col_offset + i * field["bytes"]
-                raw = payload[field_offset : field_offset + field["bytes"]]
-                record[field["name"]] = __decode_soa_field_value(field, raw, i, le)
-                col_offset += field["bytes"] * count
+            for f in schema:
+                offset = col_offset + i * f["bytes"]
+                record[f["name"]] = __decode_soa_field_value(
+                    f, payload[offset : offset + f["bytes"]], i, le
+                )
+                col_offset += f["bytes"] * count
         records.append(record)
-
     return records
+
+
+def __get_max_string_len(records, field_name):
+    """Get maximum string length for a field across all records."""
+    max_len = 1
+    for r in records:
+        val = r.get(field_name, "")
+        if isinstance(val, str):
+            max_len = max(max_len, len(val))
+        elif isinstance(val, dict):
+            for k in val:
+                nested_max = __get_max_string_len_nested(val, k)
+                max_len = max(max_len, nested_max)
+    return max_len
+
+
+def __get_max_string_len_nested(record, field_name):
+    """Get maximum string length for nested field."""
+    val = record.get(field_name, "")
+    if isinstance(val, str):
+        return len(val)
+    return 1
+
+
+# --- NEW FUNCTION ---
+def __schema_to_dtype_with_strings(schema, records):
+    """Build numpy dtype from SOA schema, using actual string lengths from data."""
+    dtype_list = []
+    for f in schema:
+        fname = f["name"]
+        ftype = f["type"]
+        if ftype == "numeric":
+            dtype_list.append((fname, __NUMPY_DTYPE_MAP[f["marker"]]))
+        elif ftype == "bool":
+            dtype_list.append((fname, "?"))
+        elif ftype == "null":
+            dtype_list.append((fname, "O"))
+        elif ftype == "array":
+            dt = "?" if f["elem_type"] == "bool" else __NUMPY_DTYPE_MAP[f["marker"]]
+            dtype_list.append((fname, dt, (f["count"],)))
+        elif ftype == "nested":
+            nested_records = [r.get(fname, {}) for r in records]
+            nested_dt = __schema_to_dtype_with_strings(f["schema"], nested_records)
+            dtype_list.append((fname, nested_dt))
+        elif ftype == "string":
+            max_len = max(1, max(len(r.get(fname, "")) for r in records))
+            dtype_list.append((fname, f"U{max_len}"))
+    return npdtype(dtype_list)
+
+
+# --- NEW FUNCTION ---
+def __dicts_to_numpy(records, schema, dims):
+    """Convert list of dicts to numpy structured array."""
+    count = len(records)
+    if count == 0:
+        return npempty(0, dtype=__schema_to_dtype(schema))
+
+    struct_dtype = __schema_to_dtype_with_strings(schema, records)
+    result = npempty(count, dtype=struct_dtype)
+
+    for i, record in enumerate(records):
+        __set_record_value(result, record, schema, i)
+
+    if len(dims) > 1:
+        result = result.reshape(dims)
+
+    return result
+
+
+# --- NEW FUNCTION ---
+def __set_record_value(result, record, schema, index):
+    """Set a record's values in numpy result."""
+    for f in schema:
+        fname = f["name"]
+        val = record.get(fname)
+        if f["type"] == "nested" and isinstance(val, dict):
+            __set_record_value(result[fname], val, f["schema"], index)
+        else:
+            result[fname][index] = val
 
 
 def __get_container_params(

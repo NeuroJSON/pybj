@@ -33,6 +33,7 @@ typedef struct {
     int islittle;
     int uint8_bytes;
     int soa_format;  /* SOA encoding format for structured arrays */
+    double soa_threshold;  // -1=auto, 0=force offset, 0.0-1.0=dict ratio
 } _bjdata_encoder_prefs_t;
 
 typedef struct {
@@ -48,6 +49,17 @@ typedef struct {
     PyObject* markers;
     _bjdata_encoder_prefs_t prefs;
 } _bjdata_encoder_buffer_t;
+
+/* String field analysis result */
+typedef struct {
+    int encoding;           /* SOA_STRING_FIXED/DICT/OFFSET */
+    Py_ssize_t fixed_len;   /* For FIXED: max UTF-8 byte length */
+    PyObject* dict_list;    /* For DICT: list of unique strings */
+    Py_ssize_t dict_count;  /* For DICT: number of unique values */
+    int index_size;         /* For DICT/OFFSET: 1, 2, or 4 bytes */
+    char index_marker;      /* For DICT/OFFSET: TYPE_UINT8/16/32 */
+    Py_ssize_t total_len;   /* Total UTF-8 bytes across all strings */
+} _string_field_info_t;
 
 /******************************************************************************/
 

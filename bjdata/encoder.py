@@ -20,6 +20,7 @@ from struct import pack, Struct
 from decimal import Decimal
 from io import BytesIO
 from math import isinf, isnan
+from itertools import accumulate
 
 from .compat import (
     Mapping,
@@ -228,8 +229,13 @@ def __get_numpy_dtype_marker(dtype_str):
     return None
 
 
-def __analyze_string_field(values):
+def __analyze_string_field(values, soa_threshold=None):
     """Analyze string field to determine best encoding: fixed, dict, or offset.
+
+    Args:
+        values: List of string values
+        soa_threshold: If 0, force offset encoding. If None, auto-select.
+                      Otherwise, use as dict threshold ratio.
 
     Returns:
         tuple: (encoding_type, param, extra_data)
@@ -240,11 +246,16 @@ def __analyze_string_field(values):
     if not values:
         return "fixed", 1, None
 
-    unique_values = list(dict.fromkeys(values))  # preserve order, remove dups
+    # Force offset encoding if threshold is 0
+    if soa_threshold == 0:
+        total_len = sum(len(v.encode("utf-8")) for v in values)
+        off_bytes = 1 if total_len <= 255 else (2 if total_len <= 65535 else 4)
+        return "offset", off_bytes, None
+
+    unique_values = list(dict.fromkeys(values))
     max_len = max(len(v.encode("utf-8")) for v in values)
     total_len = sum(len(v.encode("utf-8")) for v in values)
 
-    # Calculate storage costs for each encoding
     count = len(values)
     num_unique = len(unique_values)
 
@@ -253,17 +264,21 @@ def __analyze_string_field(values):
 
     # Dict: index_bytes * count + dict_overhead
     idx_bytes = 1 if num_unique <= 255 else (2 if num_unique <= 65535 else 4)
-    dict_overhead = sum(
-        len(v.encode("utf-8")) + 2 for v in unique_values
-    )  # +2 for length prefix
+    dict_overhead = sum(len(v.encode("utf-8")) + 2 for v in unique_values)
     dict_cost = idx_bytes * count + dict_overhead
 
     # Offset: index_bytes * count + (count+1) * offset_bytes + total_len
     off_bytes = 1 if total_len <= 255 else (2 if total_len <= 65535 else 4)
     offset_cost = idx_bytes * count + (count + 1) * off_bytes + total_len
 
-    # Choose best encoding based on cost and heuristics
-    if num_unique <= count * 0.3 and dict_cost < fixed_cost and dict_cost < offset_cost:
+    # Use custom threshold or default 0.3
+    dict_threshold = soa_threshold if soa_threshold is not None else 0.3
+
+    if (
+        num_unique <= count * dict_threshold
+        and dict_cost < fixed_cost
+        and dict_cost < offset_cost
+    ):
         return "dict", idx_bytes, unique_values
     elif max_len > 32 and offset_cost < fixed_cost:
         return "offset", off_bytes, None
@@ -277,50 +292,38 @@ def __can_encode_as_soa(item):
         import numpy as np
     except ImportError:
         return False
-
     if isinstance(item, np.ndarray):
-        # Must be structured array with named fields
         if item.dtype.names is None:
             return False
-        # All fields must be supported types (including strings now)
-        for name in item.dtype.names:
-            field_dtype = item.dtype.fields[name][0]
-            if field_dtype.shape != ():
-                return False
-            dtype_str = (
-                field_dtype.str[1:] if field_dtype.str[0] in "<>|" else field_dtype.str
-            )
-            # Allow string types (U and S) in addition to numeric
-            if not (
-                dtype_str.startswith("U")
-                or dtype_str.startswith("S")
-                or __get_numpy_dtype_marker(dtype_str) is not None
-            ):
-                return False
-        return True
-
-    # Also support list of dicts with consistent keys
+        return __check_soa_dtype(item.dtype)
     if isinstance(item, (list, tuple)) and len(item) > 0:
         if all(isinstance(x, dict) for x in item):
             keys = set(item[0].keys())
-            if all(set(x.keys()) == keys for x in item):
-                return True
-
+            return all(set(x.keys()) == keys for x in item)
     return False
 
 
-def __encode_soa_schema_field(fp_write, field_name, field_info, le):
-    """Write a single field definition in SOA schema.
+def __check_soa_dtype(dtype):
+    """Recursively check if dtype fields are SOA-compatible"""
+    for name in dtype.names:
+        field_dtype = dtype.fields[name][0]
+        if field_dtype.names is not None:
+            if not __check_soa_dtype(field_dtype):
+                return False
+            continue
+        base = field_dtype.base if field_dtype.subdtype else field_dtype
+        dstr = base.str[1:] if base.str[0] in "<>|" else base.str
+        if not (
+            dstr.startswith("U")
+            or dstr.startswith("S")
+            or __get_numpy_dtype_marker(dstr) is not None
+        ):
+            return False
+    return True
 
-    Handles:
-        - Numeric types: just the type marker
-        - Boolean: T marker
-        - Null: Z marker
-        - Fixed string: S<int><length>
-        - Dict string: [$S#<n><str1><str2>...
-        - Offset string: [$<int-type>]
-    """
-    # Write field name
+
+def __encode_soa_schema_field(fp_write, field_name, field_info, le):
+    """Write a single field definition in SOA schema."""
     encoded_name = field_name.encode("utf-8")
     __encode_int(fp_write, len(encoded_name), le)
     fp_write(encoded_name)
@@ -332,250 +335,190 @@ def __encode_soa_schema_field(fp_write, field_name, field_info, le):
         fp_write(TYPE_BOOL_TRUE)
     elif ftype == "null":
         fp_write(TYPE_NULL)
+    elif ftype == "array":
+        fp_write(ARRAY_START)
+        for _ in range(field_info["count"]):
+            fp_write(field_info["marker"])
+        fp_write(ARRAY_END)
+    elif ftype == "nested":
+        fp_write(OBJECT_START)
+        for f in field_info["schema"]:
+            __encode_soa_schema_field(fp_write, f["name"], f, le)
+        fp_write(OBJECT_END)
     elif ftype == "string":
         enc = field_info["encoding"]
         if enc == "fixed":
-            # Fixed-length string: S<int><length>
             fp_write(TYPE_STRING)
             __encode_int(fp_write, field_info["length"], le)
         elif enc == "dict":
-            # Dictionary-based string: [$S#<n><str1><str2>...
             fp_write(ARRAY_START + CONTAINER_TYPE + TYPE_STRING + CONTAINER_COUNT)
-            dictionary = field_info["dict"]
-            __encode_int(fp_write, len(dictionary), le)
-            for s in dictionary:
-                encoded = s.encode("utf-8")
-                __encode_int(fp_write, len(encoded), le)
-                fp_write(encoded)
+            __encode_int(fp_write, len(field_info["dict"]), le)
+            for s in field_info["dict"]:
+                enc_s = s.encode("utf-8")
+                __encode_int(fp_write, len(enc_s), le)
+                fp_write(enc_s)
         elif enc == "offset":
-            # Offset-table-based string: [$<int-type>]
-            idx_marker = field_info["index_marker"]
-            fp_write(ARRAY_START + CONTAINER_TYPE + idx_marker + ARRAY_END)
+            fp_write(
+                ARRAY_START + CONTAINER_TYPE + field_info["index_marker"] + ARRAY_END
+            )
 
 
 def __write_soa_field_value(fp_write, field, index, le):
     """Write a single field value in SOA payload."""
-    ftype = field["type"]
-    values = field["values"]
+    ftype, values = field["type"], field["values"]
 
     if ftype == "numeric":
         if hasattr(values, "tobytes"):
-            # numpy array - write single element bytes
             fp_write(values[index].tobytes())
         else:
-            # list - encode based on marker
-            marker = field["marker"]
-            val = values[index] if values[index] is not None else 0
-            if marker == TYPE_INT8:
-                fp_write(pack("<b" if le else ">b", val))
-            elif marker == TYPE_UINT8:
-                fp_write(pack("<B" if le else ">B", val))
-            elif marker == TYPE_INT16:
-                fp_write(__PACK_INT16[le](val))
-            elif marker == TYPE_UINT16:
-                fp_write(__PACK_UINT16[le](val))
-            elif marker == TYPE_INT32:
-                fp_write(__PACK_INT32[le](val))
-            elif marker == TYPE_UINT32:
-                fp_write(__PACK_UINT32[le](val))
-            elif marker == TYPE_INT64:
-                fp_write(__PACK_INT64[le](val))
-            elif marker == TYPE_UINT64:
-                fp_write(__PACK_UINT64[le](val))
-            elif marker == TYPE_FLOAT32:
-                fp_write(__PACK_FLOAT32[le](val))
-            elif marker == TYPE_FLOAT64:
-                fp_write(__PACK_FLOAT64[le](val))
+            __write_numeric_value(fp_write, field["marker"], values[index], le)
     elif ftype == "bool":
         fp_write(TYPE_BOOL_TRUE if values[index] else TYPE_BOOL_FALSE)
     elif ftype == "null":
-        pass  # Zero bytes in payload
+        pass
+    elif ftype == "array":
+        fp_write(values[index].tobytes())
+    elif ftype == "nested":
+        for f in field["schema"]:
+            __write_soa_field_value(fp_write, f, index, le)
     elif ftype == "string":
-        enc = field["encoding"]
-        val = values[index]
+        enc, val = field["encoding"], values[index]
         if enc == "fixed":
-            # Pad or truncate to fixed length
             encoded = val.encode("utf-8")
-            padded = encoded + b"\x00" * (field["length"] - len(encoded))
-            fp_write(padded[: field["length"]])
+            fp_write((encoded + b"\x00" * field["length"])[: field["length"]])
         elif enc == "dict":
-            # Write index into dictionary
-            idx = field["dict"].index(val)
-            idx_marker = field["index_marker"]
-            if idx_marker == TYPE_UINT8:
-                fp_write(pack("<B" if le else ">B", idx))
-            elif idx_marker == TYPE_UINT16:
-                fp_write(__PACK_UINT16[le](idx))
-            else:
-                fp_write(__PACK_UINT32[le](idx))
+            __write_index(fp_write, field["index_marker"], field["dict"].index(val), le)
         elif enc == "offset":
-            # Write sequential index (actual offsets written after payload)
-            idx_marker = field["index_marker"]
-            if idx_marker == TYPE_UINT8:
-                fp_write(pack("<B" if le else ">B", index))
-            elif idx_marker == TYPE_UINT16:
-                fp_write(__PACK_UINT16[le](index))
-            else:
-                fp_write(__PACK_UINT32[le](index))
+            __write_index(fp_write, field["index_marker"], index, le)
 
 
-def __encode_soa(fp_write, item, soa_format, le):
-    """Encode numpy structured array or list of dicts as SOA format.
+def __write_numeric_value(fp_write, marker, val, le):
+    """Write a numeric value based on marker type."""
+    val = val if val is not None else 0
+    if marker == TYPE_INT8:
+        fp_write(pack("<b" if le else ">b", val))
+    elif marker == TYPE_UINT8:
+        fp_write(pack("<B" if le else ">B", val))
+    elif marker == TYPE_INT16:
+        fp_write(__PACK_INT16[le](val))
+    elif marker == TYPE_UINT16:
+        fp_write(__PACK_UINT16[le](val))
+    elif marker == TYPE_INT32:
+        fp_write(__PACK_INT32[le](val))
+    elif marker == TYPE_UINT32:
+        fp_write(__PACK_UINT32[le](val))
+    elif marker == TYPE_INT64:
+        fp_write(__PACK_INT64[le](val))
+    elif marker == TYPE_UINT64:
+        fp_write(__PACK_UINT64[le](val))
+    elif marker == TYPE_FLOAT32:
+        fp_write(__PACK_FLOAT32[le](val))
+    elif marker == TYPE_FLOAT64:
+        fp_write(__PACK_FLOAT64[le](val))
 
-    Supports:
-        - Numeric fields (all BJData numeric types)
-        - Boolean fields
-        - String fields with automatic encoding selection:
-            - fixed: for short strings with similar lengths
-            - dict: for categorical data with few unique values
-            - offset: for variable-length strings
-    """
+
+def __write_index(fp_write, marker, idx, le):
+    """Write an index value for dict/offset string encoding."""
+    if marker == TYPE_UINT8:
+        fp_write(pack("<B" if le else ">B", idx))
+    elif marker == TYPE_UINT16:
+        fp_write(__PACK_UINT16[le](idx))
+    else:
+        fp_write(__PACK_UINT32[le](idx))
+
+
+def __build_field_schema(field_dtype, values, count, soa_threshold=None):
+    """Build schema for a single field (handles nested/array/string/numeric)."""
+    if field_dtype.names is not None:
+        nested_schema = []
+        for n in field_dtype.names:
+            inner = __build_field_schema(
+                field_dtype.fields[n][0], values[n], count, soa_threshold
+            )
+            inner["name"] = n
+            nested_schema.append(inner)
+        return {"type": "nested", "schema": nested_schema, "values": values}
+
+    if field_dtype.subdtype:
+        base, shape = field_dtype.subdtype
+        dstr = base.str[1:] if base.str[0] in "<>|" else base.str
+        return {
+            "type": "array",
+            "marker": __get_numpy_dtype_marker(dstr),
+            "count": shape[0],
+            "values": values,
+        }
+
+    dstr = field_dtype.str[1:] if field_dtype.str[0] in "<>|" else field_dtype.str
+
+    if dstr.startswith("U") or dstr.startswith("S"):
+        str_vals = [str(values[i]) for i in range(count)]
+        enc_type, enc_param, enc_dict = __analyze_string_field(str_vals, soa_threshold)
+        idx_marker = (
+            TYPE_UINT8
+            if enc_param == 1
+            else (TYPE_UINT16 if enc_param == 2 else TYPE_UINT32)
+        )
+        return {
+            "type": "string",
+            "encoding": enc_type,
+            "length": enc_param,
+            "dict": enc_dict,
+            "index_marker": idx_marker,
+            "values": str_vals,
+        }
+
+    if dstr in ("?", "b1"):
+        return {"type": "bool", "values": [bool(values[i]) for i in range(count)]}
+
+    return {
+        "type": "numeric",
+        "marker": __get_numpy_dtype_marker(dstr),
+        "values": values,
+    }
+
+
+def __collect_offset_fields(schema):
+    """Recursively collect offset-based string fields."""
+    result = []
+    for f in schema:
+        if f.get("encoding") == "offset":
+            result.append(f)
+        if f.get("type") == "nested":
+            result.extend(__collect_offset_fields(f["schema"]))
+    return result
+
+
+def __encode_soa(fp_write, item, soa_format, le, soa_threshold=None):
+    """Encode numpy structured array or list of dicts as SOA format."""
     import numpy as np
+    from itertools import accumulate
 
     is_row_major = soa_format in ("row", "r")
 
-    # Handle both numpy structured arrays and list of dicts
     if isinstance(item, np.ndarray):
         count = item.size
         dims = item.shape
-        flat_item = item.flatten()
-        field_names = item.dtype.names
-
-        # Analyze fields and build schema
+        flat = item.flatten()
         schema = []
-        for name in field_names:
-            field_dtype = item.dtype.fields[name][0]
-            dtype_str = (
-                field_dtype.str[1:] if field_dtype.str[0] in "<>|" else field_dtype.str
+        for n in item.dtype.names:
+            fs = __build_field_schema(
+                item.dtype.fields[n][0], flat[n], count, soa_threshold
             )
-
-            if dtype_str.startswith("U") or dtype_str.startswith("S"):
-                # String field - analyze for best encoding
-                values = [str(flat_item[name][i]) for i in range(count)]
-                enc_type, enc_param, enc_dict = __analyze_string_field(values)
-                idx_marker = (
-                    TYPE_UINT8
-                    if enc_param == 1
-                    else (TYPE_UINT16 if enc_param == 2 else TYPE_UINT32)
-                )
-                schema.append(
-                    {
-                        "name": name,
-                        "type": "string",
-                        "encoding": enc_type,
-                        "length": enc_param,
-                        "dict": enc_dict,
-                        "index_marker": idx_marker,
-                        "values": values,
-                    }
-                )
-            elif dtype_str in ("?", "b1"):
-                schema.append(
-                    {
-                        "name": name,
-                        "type": "bool",
-                        "values": [bool(flat_item[name][i]) for i in range(count)],
-                    }
-                )
-            else:
-                marker = __get_numpy_dtype_marker(dtype_str)
-                if marker:
-                    schema.append(
-                        {
-                            "name": name,
-                            "type": "numeric",
-                            "marker": marker,
-                            "dtype": field_dtype,
-                            "values": flat_item[name],
-                        }
-                    )
+            fs["name"] = n
+            schema.append(fs)
     else:
-        # List of dicts
         count = len(item)
         dims = [count]
-        field_names = list(item[0].keys())
+        schema = __build_dict_schema(item, count, soa_threshold)
 
-        schema = []
-        for name in field_names:
-            values = [row.get(name) for row in item]
-            sample = next((v for v in values if v is not None), None)
+    fp_write(ARRAY_START if is_row_major else OBJECT_START)
+    fp_write(CONTAINER_TYPE + OBJECT_START)
+    for f in schema:
+        __encode_soa_schema_field(fp_write, f["name"], f, le)
+    fp_write(OBJECT_END + CONTAINER_COUNT)
 
-            if sample is None:
-                schema.append({"name": name, "type": "null", "values": values})
-            elif isinstance(sample, bool):
-                schema.append({"name": name, "type": "bool", "values": values})
-            elif isinstance(sample, str):
-                str_values = [str(v) if v else "" for v in values]
-                enc_type, enc_param, enc_dict = __analyze_string_field(str_values)
-                idx_marker = (
-                    TYPE_UINT8
-                    if enc_param == 1
-                    else (TYPE_UINT16 if enc_param == 2 else TYPE_UINT32)
-                )
-                schema.append(
-                    {
-                        "name": name,
-                        "type": "string",
-                        "encoding": enc_type,
-                        "length": enc_param,
-                        "dict": enc_dict,
-                        "index_marker": idx_marker,
-                        "values": str_values,
-                    }
-                )
-            elif isinstance(sample, float):
-                schema.append(
-                    {
-                        "name": name,
-                        "type": "numeric",
-                        "marker": TYPE_FLOAT64,
-                        "values": values,
-                    }
-                )
-            elif isinstance(sample, int):
-                # Choose smallest integer type that fits
-                max_val = max(abs(v) for v in values if v is not None)
-                if max_val < 128:
-                    marker = TYPE_INT8
-                elif max_val < 256:
-                    marker = TYPE_UINT8
-                elif max_val < 32768:
-                    marker = TYPE_INT16
-                elif max_val < 65536:
-                    marker = TYPE_UINT16
-                elif max_val < 2**31:
-                    marker = TYPE_INT32
-                elif max_val < 2**32:
-                    marker = TYPE_UINT32
-                else:
-                    marker = TYPE_INT64
-                schema.append(
-                    {
-                        "name": name,
-                        "type": "numeric",
-                        "marker": marker,
-                        "values": values,
-                    }
-                )
-
-    # Write header: [$ or {$ + schema + # + count
-    if is_row_major:
-        fp_write(ARRAY_START)
-    else:
-        fp_write(OBJECT_START)
-
-    fp_write(CONTAINER_TYPE)
-
-    # Write schema object
-    fp_write(OBJECT_START)
-    for field in schema:
-        __encode_soa_schema_field(fp_write, field["name"], field, le)
-    fp_write(OBJECT_END)
-
-    # Write count
-    fp_write(CONTAINER_COUNT)
     if len(dims) > 1:
-        # ND dimensions
         fp_write(ARRAY_START)
         for d in dims:
             __encode_int(fp_write, d, le)
@@ -583,44 +526,88 @@ def __encode_soa(fp_write, item, soa_format, le):
     else:
         __encode_int(fp_write, count, le)
 
-    # Write payload
     if is_row_major:
-        # Interleaved: for each record, write all fields
         for i in range(count):
-            for field in schema:
-                __write_soa_field_value(fp_write, field, i, le)
+            for f in schema:
+                __write_soa_field_value(fp_write, f, i, le)
     else:
-        # Columnar: for each field, write all values
-        for field in schema:
+        for f in schema:
             for i in range(count):
-                __write_soa_field_value(fp_write, field, i, le)
+                __write_soa_field_value(fp_write, f, i, le)
 
-    # Write offset tables and string buffers for offset-based fields
-    offset_fields = [f for f in schema if f.get("encoding") == "offset"]
-    for field in offset_fields:
-        values = field["values"]
-        encoded = [v.encode("utf-8") for v in values]
-
-        # Build offset table
-        offsets = [0]
-        for e in encoded:
-            offsets.append(offsets[-1] + len(e))
-
-        # Write offset table (count + 1 entries)
-        idx_marker = field["index_marker"]
-        if idx_marker == TYPE_UINT8:
-            for off in offsets:
-                fp_write(pack("<B" if le else ">B", off))
-        elif idx_marker == TYPE_UINT16:
-            for off in offsets:
-                fp_write(__PACK_UINT16[le](off))
-        else:
-            for off in offsets:
-                fp_write(__PACK_UINT32[le](off))
-
-        # Write concatenated string buffer
+    for f in __collect_offset_fields(schema):
+        encoded = [v.encode("utf-8") for v in f["values"]]
+        offsets = [0] + list(accumulate(len(e) for e in encoded))
+        for off in offsets:
+            __write_index(fp_write, f["index_marker"], off, le)
         for e in encoded:
             fp_write(e)
+
+
+def __collect_offset_fields(schema):
+    """Recursively collect offset-based string fields."""
+    for f in schema:
+        if f.get("encoding") == "offset":
+            yield f
+        if f.get("type") == "nested":
+            yield from __collect_offset_fields(f["schema"])
+
+
+def __write_soa_field_value(fp_write, field, index, le):
+    """Write a single field value in SOA payload."""
+    ftype, values = field["type"], field["values"]
+
+    if ftype == "numeric":
+        if hasattr(values, "tobytes"):
+            fp_write(values[index].tobytes())
+        else:
+            __write_numeric_value(fp_write, field["marker"], values[index], le)
+    elif ftype == "bool":
+        fp_write(TYPE_BOOL_TRUE if values[index] else TYPE_BOOL_FALSE)
+    elif ftype == "null":
+        pass
+    elif ftype == "array":
+        fp_write(values[index].tobytes())
+    elif ftype == "nested":
+        for f in field["schema"]:
+            __write_soa_field_value(fp_write, f, index, le)
+    elif ftype == "string":
+        enc, val = field["encoding"], values[index]
+        if enc == "fixed":
+            encoded = val.encode("utf-8")
+            fp_write((encoded + b"\x00" * field["length"])[: field["length"]])
+        elif enc == "dict":
+            __write_index(fp_write, field["index_marker"], field["dict"].index(val), le)
+        elif enc == "offset":
+            __write_index(fp_write, field["index_marker"], index, le)
+
+
+def __write_numeric_value(fp_write, marker, val, le):
+    """Write a numeric value based on marker type."""
+    val = val if val is not None else 0
+    packers = {
+        TYPE_INT8: lambda v: pack("<b" if le else ">b", v),
+        TYPE_UINT8: lambda v: pack("<B" if le else ">B", v),
+        TYPE_INT16: lambda v: __PACK_INT16[le](v),
+        TYPE_UINT16: lambda v: __PACK_UINT16[le](v),
+        TYPE_INT32: lambda v: __PACK_INT32[le](v),
+        TYPE_UINT32: lambda v: __PACK_UINT32[le](v),
+        TYPE_INT64: lambda v: __PACK_INT64[le](v),
+        TYPE_UINT64: lambda v: __PACK_UINT64[le](v),
+        TYPE_FLOAT32: lambda v: __PACK_FLOAT32[le](v),
+        TYPE_FLOAT64: lambda v: __PACK_FLOAT64[le](v),
+    }
+    fp_write(packers[marker](val))
+
+
+def __write_index(fp_write, marker, idx, le):
+    """Write an index value for dict/offset string encoding."""
+    if marker == TYPE_UINT8:
+        fp_write(pack("<B" if le else ">B", idx))
+    elif marker == TYPE_UINT16:
+        fp_write(__PACK_UINT16[le](idx))
+    else:
+        fp_write(__PACK_UINT32[le](idx))
 
 
 def __encode_value(
@@ -634,6 +621,7 @@ def __encode_value(
     islittle,
     default,
     soa_format,
+    soa_threshold=None,
 ):
     le = islittle
 
@@ -682,7 +670,9 @@ def __encode_value(
     elif isinstance(item, Sequence):
         # Check for SOA-encodable list of dicts
         if soa_format and __can_encode_as_soa(item):
-            __encode_soa(fp_write, item, soa_format, le)
+            __encode_soa(
+                fp_write, item, soa_format, le, soa_threshold
+            )  # Added soa_threshold
         else:
             __encode_array(
                 fp_write,
@@ -696,7 +686,6 @@ def __encode_value(
                 default,
                 soa_format,
             )
-
     elif default is not None:
         __encode_value(
             fp_write,
@@ -709,15 +698,19 @@ def __encode_value(
             islittle,
             default,
             soa_format,
+            soa_threshold,  # Added soa_threshold
         )
-
     elif type(item).__module__ == "numpy":
         # Check for SOA-compatible structured array
         if soa_format and __can_encode_as_soa(item):
-            __encode_soa(fp_write, item, soa_format, le)
+            __encode_soa(
+                fp_write, item, soa_format, le, soa_threshold
+            )  # Added soa_threshold
         elif soa_format is None and __can_encode_as_soa(item):
             # Auto-enable column-major SOA for structured arrays
-            __encode_soa(fp_write, item, "col", le)
+            __encode_soa(
+                fp_write, item, "col", le, soa_threshold
+            )  # Added soa_threshold
         else:
             __encode_numpy(fp_write, item, uint8_bytes, islittle, default)
 
@@ -885,6 +878,7 @@ def dump(
     islittle=True,
     default=None,
     soa_format=None,
+    soa_threshold=None,
 ):
     """Writes the given object as BJData/UBJSON to the provided file-like object
 
@@ -915,6 +909,10 @@ def dump(
                          'col' or 'column' - column-major (columnar)
                          'row' - row-major (interleaved)
                          None - auto-enable column-major for structured arrays
+        soa_threshold: Controls string encoding in SOA format:
+                      - None: auto-select based on data analysis
+                      - 0: force offset-table encoding for all strings
+                      - 0.0-1.0: ratio threshold for dictionary encoding
 
     Raises:
         EncoderException: If an encoding failure occured.
@@ -999,6 +997,7 @@ def dump(
         islittle,
         default,
         soa_format,
+        soa_threshold,
     )
 
 
@@ -1011,6 +1010,7 @@ def dumpb(
     islittle=True,
     default=None,
     soa_format=None,
+    soa_threshold=None,
 ):
     """Returns the given object as BJData/UBJSON in a bytes instance. See dump() for
     available arguments."""
@@ -1025,5 +1025,6 @@ def dumpb(
             islittle=islittle,
             default=default,
             soa_format=soa_format,
+            soa_threshold=soa_threshold,
         )
         return fp.getvalue()

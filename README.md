@@ -2,10 +2,10 @@
 
 # Binary JData for Python - a lightweight binary JSON format
 
-- Copyright: (C) Qianqian Fang (2020-2025) <q.fang at neu.edu>
+- Copyright: (C) Qianqian Fang (2020-2026) <q.fang at neu.edu>
 - Copyright: (C) Iotic Labs Ltd. (2016-2019) <vilnis.termanis at iotic-labs.com>
 - License: Apache License, Version 2.0
-- Version: 0.6.0
+- Version: 0.6.5
 - URL: https://pypi.org/project/bjdata/
 - Github: https://github.com/NeuroJSON/pybj
 - BJData Spec Version: [Draft 4](https://neurojson.org/bjdata/draft4)

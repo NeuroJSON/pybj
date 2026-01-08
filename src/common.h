@@ -15,45 +15,34 @@
  * limitations under the License.
  */
 
-#pragma once
+#ifndef COMMON_H
+#define COMMON_H
 
-#if defined (__cplusplus)
-extern "C" {
-#endif
+#include <Python.h>
 
 /******************************************************************************/
-
-#define MIN(x, y) (x) <= (y) ? (x) : (y)
-#define MAX(x, y) (x) >= (y) ? (x) : (y)
 
 #define UNUSED(x) (void)(x)
 
-#define BAIL_ON_NULL(result)\
-    if (NULL == (result)) {\
-        goto bail;\
-    }
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
-#define BAIL_ON_NONZERO(result)\
-    if (result) {\
-        goto bail;\
-    }
-
-#define BAIL_ON_NEGATIVE(result)\
-    if ((result) < 0) {\
-        goto bail;\
-    }
+#define BAIL_ON_NULL(action) if (NULL == (action)) goto bail
+#define BAIL_ON_NONZERO(action) if (action) goto bail
+#define BAIL_ON_NEGATIVE(action) if ((action) < 0) goto bail
 
 /******************************************************************************/
 
-/* SOA (Structure of Arrays) format options */
-enum {
-    SOA_FORMAT_NONE = 0,     /* No SOA encoding (default) */
-    SOA_FORMAT_COLUMN = 1,   /* Column-major (columnar) SOA */
-    SOA_FORMAT_ROW = 2       /* Row-major (interleaved) SOA */
-};
+/* SOA string encoding types */
+#define SOA_STRING_FIXED   0   /* Fixed-length strings with null padding */
+#define SOA_STRING_DICT    1   /* Dictionary encoding with indices */
+#define SOA_STRING_OFFSET  2   /* Offset table encoding */
+
+/* SOA format options */
+#define SOA_FORMAT_NONE    0   /* Auto-detect / no explicit SOA */
+#define SOA_FORMAT_COL     1   /* Column-major (struct of arrays) */
+#define SOA_FORMAT_ROW     2   /* Row-major (array of structs) */
 
 /******************************************************************************/
 
-#if defined (__cplusplus)
-}
-#endif
+#endif /* COMMON_H */

@@ -1428,6 +1428,797 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
         # Payload should end with ADBECF (row-major: interleaved)
         self.assertTrue(bjd.endswith(b"ADBECF"))
 
+    # ==========================================================================
+    # SOA String Encoding Tests - BJData Draft 4
+    # Fixed-length strings, Dictionary-based strings, and Offset-table strings
+    # ==========================================================================
+
+    # --------------------------------------------------------------------------
+    # SECTION A: Fixed-Length String Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_fixed_string_same_length(self):
+        """Test fixed-length string SOA where all strings have same length"""
+        dt = np.dtype([("code", "U5")])
+        data = np.array([("ABCDE",), ("FGHIJ",), ("12345",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result.dtype.names, ("code",))
+        for i in range(len(data)):
+            self.assertEqual(result["code"][i], data["code"][i])
+
+    def test_soa_fixed_string_different_lengths(self):
+        """Test fixed-length string SOA with different lengths (null-padded)"""
+        dt = np.dtype([("id", "u1"), ("name", "U3")])
+        data = np.array(
+            [(ord("A"), "ABC"), (ord("B"), "DE"), (ord("C"), "F")], dtype=dt
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        # Shorter strings should be preserved (null-padded in encoding)
+        self.assertEqual(result["name"][0], "ABC")
+        self.assertEqual(result["name"][1], "DE")
+        self.assertEqual(result["name"][2], "F")
+
+    def test_soa_fixed_string_row_major(self):
+        """Test fixed-length string SOA in row-major format"""
+        dt = np.dtype([("code", "U2")])
+        data = np.array([("AB",), ("CD",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="row")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result["code"][0], "AB")
+        self.assertEqual(result["code"][1], "CD")
+
+    def test_soa_fixed_string_with_numeric(self):
+        """Test fixed-length string SOA mixed with numeric fields"""
+        dt = np.dtype([("id", "u1"), ("tag", "U2")])
+        data = np.array([(ord("A"), "Hi"), (ord("B"), "Lo")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["tag"][0], "Hi")
+        self.assertEqual(result["tag"][1], "Lo")
+
+    def test_soa_fixed_string_with_empty(self):
+        """Test fixed-length string SOA with empty string"""
+        dt = np.dtype([("id", "u1"), ("tag", "U2")])
+        data = np.array([(ord("A"), "Hi"), (ord("B"), "")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["tag"][0], "Hi")
+        self.assertEqual(result["tag"][1], "")
+
+    def test_soa_fixed_string_single_char(self):
+        """Test fixed-length string SOA with single character strings"""
+        dt = np.dtype([("ch", "U1")])
+        data = np.array([("A",), ("B",), ("C",), ("D",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        for i in range(len(data)):
+            self.assertEqual(result["ch"][i], data["ch"][i])
+
+    def test_soa_fixed_string_max_uint8_length(self):
+        """Test fixed-length string with 255 chars (max uint8 length)"""
+        str255 = "X" * 255
+        dt = np.dtype([("long", "U255")])
+        data = np.array([(str255,), (str255,)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result["long"][0], str255)
+        self.assertEqual(result["long"][1], str255)
+
+    def test_soa_fixed_string_requires_uint16_length(self):
+        """Test fixed-length string requiring uint16 length (>255 chars)"""
+        str300 = "Y" * 300
+        dt = np.dtype([("verylong", "U300")])
+        data = np.array([(str300,), (str300,)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result["verylong"][0], str300)
+        self.assertEqual(result["verylong"][1], str300)
+
+    # --------------------------------------------------------------------------
+    # SECTION B: Dictionary-Based String Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_dict_string_col_major(self):
+        """Test dictionary string SOA (2 unique in 4 records = 0.5 ratio)"""
+        dt = np.dtype([("id", "u1"), ("status", "U8")])
+        data = np.array(
+            [
+                (ord("A"), "active"),
+                (ord("B"), "inactive"),
+                (ord("C"), "active"),
+                (ord("D"), "active"),
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(len(data)):
+            self.assertEqual(result["status"][i], data["status"][i])
+
+    def test_soa_dict_string_3_values(self):
+        """Test dictionary string SOA with 3 unique values (3/6 = 0.5)"""
+        dt = np.dtype([("color", "U5")])
+        data = np.array(
+            [("red",), ("green",), ("blue",), ("red",), ("green",), ("blue",)],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        for i in range(len(data)):
+            self.assertEqual(result["color"][i], data["color"][i])
+
+    def test_soa_dict_string_all_same(self):
+        """Test dictionary string SOA where all values are same (1/3 = 0.33)"""
+        dt = np.dtype([("id", "u1"), ("tag", "U1")])
+        data = np.array([(ord("A"), "X"), (ord("B"), "X"), (ord("C"), "X")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(len(data)):
+            self.assertEqual(result["tag"][i], "X")
+
+    def test_soa_dict_string_at_threshold(self):
+        """Test dictionary string exactly at threshold (2/4 = 0.5)"""
+        dt = np.dtype([("type", "U3")])
+        data = np.array([("ON",), ("OFF",), ("ON",), ("OFF",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result["type"][0], "ON")
+        self.assertEqual(result["type"][1], "OFF")
+        self.assertEqual(result["type"][2], "ON")
+        self.assertEqual(result["type"][3], "OFF")
+
+    def test_soa_dict_string_all_empty(self):
+        """Test dictionary string where all values are empty (1/2 = 0.5)"""
+        dt = np.dtype([("id", "u1"), ("tag", "U1")])
+        data = np.array([(ord("A"), ""), (ord("B"), "")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["tag"][0], "")
+        self.assertEqual(result["tag"][1], "")
+
+    def test_soa_dict_string_with_empty_entry(self):
+        """Test dictionary string with empty string as one of the values"""
+        dt = np.dtype([("id", "u1"), ("tag", "U1")])
+        data = np.array([(ord("A"), ""), (ord("B"), ""), (ord("C"), "")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(len(data)):
+            self.assertEqual(result["tag"][i], "")
+
+    def test_soa_dict_string_256_unique(self):
+        """Test dictionary with 256 unique values (may require uint16 index)"""
+        unique_strs = [f"{i:03d}" for i in range(256)]
+        dup_strs = unique_strs + unique_strs  # 512 records, 256 unique = 0.5
+        dt = np.dtype([("code", "U3")])
+        data = np.array([(s,) for s in dup_strs], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        for i in range(len(data)):
+            self.assertEqual(result["code"][i], data["code"][i])
+
+    # --------------------------------------------------------------------------
+    # SECTION C: Offset-Table String Tests (Variable-Length)
+    # --------------------------------------------------------------------------
+
+    def test_soa_offset_string_col_major(self):
+        """Test offset-table string SOA in column-major format"""
+        dt = np.dtype([("id", "u1"), ("desc", "U32")])
+        data = np.array(
+            [
+                (ord("A"), "short"),
+                (ord("B"), "a very long description"),
+                (ord("C"), "mid"),
+            ],
+            dtype=dt,
+        )
+
+        # Force offset encoding with soa_threshold=0
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["desc"][0], "short")
+        self.assertEqual(result["desc"][1], "a very long description")
+        self.assertEqual(result["desc"][2], "mid")
+
+    def test_soa_offset_string_row_major(self):
+        """Test offset-table string SOA in row-major format"""
+        dt = np.dtype([("id", "u1"), ("text", "U8")])
+        data = np.array([(ord("A"), "Hello"), (ord("B"), "World")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="row", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["text"][0], "Hello")
+        self.assertEqual(result["text"][1], "World")
+
+    def test_soa_offset_string_with_empty(self):
+        """Test offset-table string SOA with empty string"""
+        dt = np.dtype([("id", "u1"), ("note", "U8")])
+        data = np.array([(ord("A"), "abc"), (ord("B"), ""), (ord("C"), "de")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["note"][0], "abc")
+        self.assertEqual(result["note"][1], "")
+        self.assertEqual(result["note"][2], "de")
+
+    def test_soa_offset_string_varying_lengths(self):
+        """Test offset-table string with varying lengths"""
+        dt = np.dtype([("desc", "U8")])
+        data = np.array([("a",), ("bb",), ("ccc",), ("dddd",), ("eeeee",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        for i in range(len(data)):
+            self.assertEqual(result["desc"][i], data["desc"][i])
+
+    def test_soa_offset_string_all_same(self):
+        """Test offset-table string where all values are same"""
+        dt = np.dtype([("note", "U8")])
+        data = np.array([("same",), ("same",), ("same",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        for i in range(len(data)):
+            self.assertEqual(result["note"][i], "same")
+
+    def test_soa_offset_string_uint8_offsets(self):
+        """Test offset-table with small total (<256 bytes) using uint8 offsets"""
+        dt = np.dtype([("txt", "U8")])
+        data = np.array([("a",), ("bb",), ("ccc",)], dtype=dt)  # 6 bytes total
+
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        for i in range(len(data)):
+            self.assertEqual(result["txt"][i], data["txt"][i])
+
+    def test_soa_offset_string_uint16_offsets(self):
+        """Test offset-table with medium total (256-65535 bytes) using uint16"""
+        str200 = "M" * 200
+        dt = np.dtype([("txt", "U200")])
+        data = np.array([(str200,), (str200,)], dtype=dt)  # 400 bytes total
+
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result["txt"][0], str200)
+        self.assertEqual(result["txt"][1], str200)
+
+    def test_soa_offset_string_uint32_offsets(self):
+        """Test offset-table with large total (>65535 bytes) using uint32"""
+        str35k = "L" * 35000
+        dt = np.dtype([("txt", "U35000")])
+        data = np.array([(str35k,), (str35k,)], dtype=dt)  # 70000 bytes total
+
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result["txt"][0], str35k)
+        self.assertEqual(result["txt"][1], str35k)
+
+    # --------------------------------------------------------------------------
+    # SECTION D: Mixed String Encoding Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_fixed_string_above_threshold(self):
+        """Test that high unique ratio uses fixed-length (2/3 > 0.5)"""
+        dt = np.dtype([("id", "u1"), ("type", "U1")])
+        data = np.array([(ord("A"), "A"), (ord("B"), "B"), (ord("C"), "A")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["type"][0], "A")
+        self.assertEqual(result["type"][1], "B")
+        self.assertEqual(result["type"][2], "A")
+
+    def test_soa_mixed_string_with_logical(self):
+        """Test string field mixed with logical field"""
+        dt = np.dtype([("flag", "?"), ("cat", "U3")])
+        data = np.array([(True, "yes"), (False, "no"), (True, "yes")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["flag"], data["flag"]))
+        self.assertEqual(result["cat"][0], "yes")
+        self.assertEqual(result["cat"][1], "no")
+        self.assertEqual(result["cat"][2], "yes")
+
+    def test_soa_multiple_string_fields(self):
+        """Test multiple string fields with different encodings"""
+        dt = np.dtype([("name", "U8"), ("status", "U8"), ("id", "u1")])
+        # name: 6 unique in 6 = 1.0 -> fixed
+        # status: 2 unique in 6 = 0.33 -> dict
+        data = np.array(
+            [
+                ("Alice", "on", 1),
+                ("Bob", "off", 2),
+                ("Carol", "on", 3),
+                ("Dave", "off", 4),
+                ("Eve", "on", 5),
+                ("Frank", "off", 6),
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(len(data)):
+            self.assertEqual(result["name"][i], data["name"][i])
+            self.assertEqual(result["status"][i], data["status"][i])
+
+    # --------------------------------------------------------------------------
+    # SECTION E: Fixed Array with String Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_fixed_array_with_string(self):
+        """Test fixed array field combined with string field"""
+        dt = np.dtype([("val", "u1"), ("vec", "u1", (2,)), ("cat", "U1")])
+        data = np.array(
+            [
+                (ord("A"), [ord("a"), ord("b")], "X"),
+                (ord("B"), [ord("c"), ord("d")], "Y"),
+                (ord("C"), [ord("e"), ord("f")], "X"),
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["val"], data["val"]))
+        self.assertTrue(np.array_equal(result["vec"], data["vec"]))
+        for i in range(len(data)):
+            self.assertEqual(result["cat"][i], data["cat"][i])
+
+    def test_soa_scalar_double_with_string(self):
+        """Test scalar double field combined with string field"""
+        dt = np.dtype([("pos", "f8"), ("tag", "U2")])
+        data = np.array([(1.5, "CD"), (2.5, "EF")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.allclose(result["pos"], data["pos"]))
+        self.assertEqual(result["tag"][0], "CD")
+        self.assertEqual(result["tag"][1], "EF")
+
+    # --------------------------------------------------------------------------
+    # SECTION F: Nested Struct with String Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_nested_struct_with_string_col_major(self):
+        """Test nested struct with string field in column-major"""
+        inner_dt = np.dtype([("name", "U2"), ("val", "u1")])
+        outer_dt = np.dtype([("id", "u1"), ("info", inner_dt)])
+
+        inner1 = np.array([("AB", ord("X"))], dtype=inner_dt)[0]
+        inner2 = np.array([("CD", ord("Y"))], dtype=inner_dt)[0]
+        data = np.array([(ord("A"), inner1), (ord("B"), inner2)], dtype=outer_dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["info"]["name"][0], "AB")
+        self.assertEqual(result["info"]["name"][1], "CD")
+        self.assertTrue(np.array_equal(result["info"]["val"], data["info"]["val"]))
+
+    def test_soa_nested_struct_numeric_only(self):
+        """Test nested struct with only numeric fields"""
+        inner_dt = np.dtype([("x", "u1"), ("y", "u1")])
+        outer_dt = np.dtype([("id", "u1"), ("pt", inner_dt)])
+
+        data = np.array(
+            [
+                (ord("A"), (ord("1"), ord("2"))),
+                (ord("B"), (ord("3"), ord("4"))),
+            ],
+            dtype=outer_dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertTrue(np.array_equal(result["pt"]["x"], data["pt"]["x"]))
+        self.assertTrue(np.array_equal(result["pt"]["y"], data["pt"]["y"]))
+
+    def test_soa_nested_struct_3_levels(self):
+        """Test deeply nested struct (3 levels)"""
+        level3_dt = np.dtype([("d", "u1")])
+        level2_dt = np.dtype([("c", level3_dt)])
+        level1_dt = np.dtype([("a", "u1"), ("b", level2_dt)])
+
+        data = np.array(
+            [
+                (ord("1"), ((ord("X"),),)),
+                (ord("2"), ((ord("Y"),),)),
+            ],
+            dtype=level1_dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["a"], data["a"]))
+        self.assertTrue(np.array_equal(result["b"]["c"]["d"], data["b"]["c"]["d"]))
+
+    def test_soa_nested_struct_with_logical(self):
+        """Test nested struct with logical field"""
+        inner_dt = np.dtype([("flag", "?")])
+        outer_dt = np.dtype([("id", "u1"), ("info", inner_dt)])
+
+        data = np.array(
+            [
+                (ord("A"), (True,)),
+                (ord("B"), (False,)),
+            ],
+            dtype=outer_dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertTrue(np.array_equal(result["info"]["flag"], data["info"]["flag"]))
+
+    def test_soa_nested_struct_row_major(self):
+        """Test nested struct in row-major format"""
+        inner_dt = np.dtype([("x", "u1")])
+        outer_dt = np.dtype([("id", "u1"), ("pt", inner_dt)])
+
+        data = np.array(
+            [
+                (ord("A"), (ord("1"),)),
+                (ord("B"), (ord("2"),)),
+            ],
+            dtype=outer_dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="row")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertTrue(np.array_equal(result["pt"]["x"], data["pt"]["x"]))
+
+    def test_soa_nested_struct_roundtrip(self):
+        """Test nested struct roundtrip with strings"""
+        inner_dt = np.dtype([("name", "U5"), ("code", "U2")])
+        outer_dt = np.dtype([("id", "u1"), ("meta", inner_dt)])
+
+        data = np.array(
+            [
+                (1, ("Alice", "A1")),
+                (2, ("Bob", "B2")),
+            ],
+            dtype=outer_dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["meta"]["name"][0], "Alice")
+        self.assertEqual(result["meta"]["name"][1], "Bob")
+        self.assertEqual(result["meta"]["code"][0], "A1")
+        self.assertEqual(result["meta"]["code"][1], "B2")
+
+    # --------------------------------------------------------------------------
+    # SECTION G: Row-Major String Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_row_major_fixed_string_3char(self):
+        """Test row-major with fixed 3-char strings"""
+        dt = np.dtype([("id", "u1"), ("tag", "U3")])
+        data = np.array([(ord("A"), "XYZ"), (ord("B"), "ABC")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="row")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["tag"][0], "XYZ")
+        self.assertEqual(result["tag"][1], "ABC")
+
+    def test_soa_row_major_mixed_types_with_string(self):
+        """Test row-major with mixed types including string"""
+        dt = np.dtype([("id", "u1"), ("name", "U2"), ("val", "i2")])
+        data = np.array([(1, "AA", 100), (2, "BB", 200), (3, "CC", 300)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="row")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertTrue(np.array_equal(result["val"], data["val"]))
+        for i in range(len(data)):
+            self.assertEqual(result["name"][i], data["name"][i])
+
+    # --------------------------------------------------------------------------
+    # SECTION H: N-Dimensional Array with String Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_2d_array_with_string(self):
+        """Test 2D SOA array with string field"""
+        dt = np.dtype([("id", "u1"), ("tag", "U1")])
+        data = np.array(
+            [
+                [(ord("A"), "W"), (ord("B"), "X")],
+                [(ord("C"), "Y"), (ord("D"), "Z")],
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result.shape, data.shape)
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                self.assertEqual(result["tag"][i, j], data["tag"][i, j])
+
+    def test_soa_3x2_array_with_string(self):
+        """Test 3x2 SOA array with string field"""
+        dt = np.dtype([("x", "u1"), ("name", "U2")])
+        data = np.array(
+            [
+                [(ord("A"), "AA"), (ord("B"), "BB")],
+                [(ord("C"), "CC"), (ord("D"), "DD")],
+                [(ord("E"), "EE"), (ord("F"), "FF")],
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result.shape, (3, 2))
+        self.assertTrue(np.array_equal(result["x"], data["x"]))
+
+    # --------------------------------------------------------------------------
+    # SECTION I: Edge Cases and Error Handling
+    # --------------------------------------------------------------------------
+
+    def test_soa_empty_string_various_positions(self):
+        """Test empty strings at various positions"""
+        dt = np.dtype([("a", "U2"), ("b", "U2"), ("c", "U2")])
+        data = np.array([("", "A", "P"), ("X", "", "Q"), ("Y", "B", "")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        for field in ("a", "b", "c"):
+            for i in range(len(data)):
+                self.assertEqual(result[field][i], data[field][i])
+
+    def test_soa_field_name_with_digits(self):
+        """Test SOA with field names containing digits"""
+        dt = np.dtype([("field1", "u1"), ("data2", "U2")])
+        data = np.array([(ord("A"), "XX"), (ord("B"), "YY")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["field1"], data["field1"]))
+        self.assertEqual(result["data2"][0], "XX")
+        self.assertEqual(result["data2"][1], "YY")
+
+    def test_soa_long_field_name_with_string(self):
+        """Test SOA with long field name (>30 chars)"""
+        long_name = "x" * 30
+        dt = np.dtype([(long_name, "U4")])
+        data = np.array([("test",), ("data",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result[long_name][0], "test")
+        self.assertEqual(result[long_name][1], "data")
+
+    # --------------------------------------------------------------------------
+    # SECTION J: Roundtrip Tests
+    # --------------------------------------------------------------------------
+
+    def test_soa_fixed_string_roundtrip(self):
+        """Test fixed-length string roundtrip"""
+        dt = np.dtype([("code", "U3")])
+        data = np.array([("ABC",), ("DEF",), ("GHI",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        for i in range(len(data)):
+            self.assertEqual(result["code"][i], data["code"][i])
+
+    def test_soa_dict_string_roundtrip(self):
+        """Test dictionary string roundtrip"""
+        dt = np.dtype([("id", "u1"), ("status", "U8")])
+        data = np.array(
+            [
+                (1, "active"),
+                (2, "pending"),
+                (3, "active"),
+                (4, "pending"),
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(len(data)):
+            self.assertEqual(result["status"][i], data["status"][i])
+
+    def test_soa_offset_string_roundtrip(self):
+        """Test offset-table string roundtrip"""
+        dt = np.dtype([("id", "u1"), ("desc", "U32")])
+        data = np.array(
+            [(1, "short"), (2, "a very long description"), (3, "mid")], dtype=dt
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(len(data)):
+            self.assertEqual(result["desc"][i], data["desc"][i])
+
+    def test_soa_row_major_string_roundtrip(self):
+        """Test row-major string roundtrip"""
+        dt = np.dtype([("id", "u1"), ("name", "U2")])
+        data = np.array([(1, "AB"), (2, "CD")], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="row")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        self.assertEqual(result["name"][0], "AB")
+        self.assertEqual(result["name"][1], "CD")
+
+    def test_soa_2d_string_roundtrip(self):
+        """Test 2D array with string roundtrip"""
+        dt = np.dtype([("x", "u1"), ("name", "U1")])
+        data = np.array(
+            [
+                [(ord("A"), "W"), (ord("B"), "X")],
+                [(ord("C"), "Y"), (ord("D"), "Z")],
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertEqual(result.shape, data.shape)
+        self.assertTrue(np.array_equal(result["x"], data["x"]))
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                self.assertEqual(result["name"][i, j], data["name"][i, j])
+
+    def test_soa_mixed_string_encodings_roundtrip(self):
+        """Test mixed string encodings roundtrip"""
+        dt = np.dtype([("name", "U8"), ("status", "U8"), ("id", "u1")])
+        data = np.array(
+            [
+                ("Alice", "on", 1),
+                ("Bob", "off", 2),
+                ("Carol", "on", 3),
+                ("Dave", "off", 4),
+                ("Eve", "on", 5),
+                ("Frank", "off", 6),
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+        result = self.bjdloadb(bjd)
+
+        self.assertTrue(np.array_equal(result["id"], data["id"]))
+        for i in range(len(data)):
+            self.assertEqual(result["name"][i], data["name"][i])
+            self.assertEqual(result["status"][i], data["status"][i])
+
+    # --------------------------------------------------------------------------
+    # SECTION K: Binary Format Verification
+    # --------------------------------------------------------------------------
+
+    def test_soa_fixed_string_binary_format(self):
+        """Test that fixed-length string produces correct binary marker"""
+        dt = np.dtype([("code", "U3")])
+        data = np.array([("ABC",), ("DEF",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col")
+
+        # Should contain 'S' marker for fixed string followed by length
+        self.assertIn(b"S", bjd)
+        # Should contain the string data
+        self.assertIn(b"ABC", bjd)
+        self.assertIn(b"DEF", bjd)
+
+    def test_soa_dict_string_binary_format(self):
+        """Test that dictionary string produces [$S# marker"""
+        dt = np.dtype([("status", "U8")])
+        # 2 unique in 8 = 0.25 < 0.5, triggers dict
+        data = np.array(
+            [
+                ("active",),
+                ("inactive",),
+                ("active",),
+                ("active",),
+                ("inactive",),
+                ("active",),
+                ("inactive",),
+                ("active",),
+            ],
+            dtype=dt,
+        )
+
+        bjd = self.bjddumpb(data, soa_format="col")
+
+        # Dictionary marker: [$S#
+        self.assertIn(b"[$S#", bjd)
+
+    def test_soa_offset_string_binary_format(self):
+        """Test that offset string produces [$U] marker"""
+        dt = np.dtype([("desc", "U32")])
+        data = np.array([("short",), ("longer text",), ("x",)], dtype=dt)
+
+        bjd = self.bjddumpb(data, soa_format="col", soa_threshold=0)
+
+        # Offset marker: [$U] (array of uint8 offsets for small data)
+        self.assertIn(b"[$", bjd)
+
     # add for coverage
 
     def test_encoder_edge_cases(self):
@@ -1657,6 +2448,7 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
         dt = np.dtype([("x", "u1"), ("y", "u1")])
         data = np.array([(65, 66), (67, 68)], dtype=dt)
         bjd = self.bjddumpb(data, soa_format="col")
+
         result = self.bjdloadb(bjd)
         self.assertTrue(np.array_equal(result, data))
 

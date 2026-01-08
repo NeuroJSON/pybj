@@ -57,19 +57,34 @@ typedef struct _bjdata_decoder_buffer_t {
 
 /******************************************************************************/
 
+
 /* SOA schema field structure - represents a single field in an SOA schema */
-typedef struct {
-    char* name;              /* Field name (heap allocated, null-terminated) */
-    Py_ssize_t name_len;     /* Length of field name */
-    char type_marker;        /* BJData type marker (e.g., TYPE_INT32, TYPE_FLOAT64) */
-    int dtype_num;           /* NumPy dtype number (e.g., PyArray_INT, PyArray_DOUBLE) */
-    Py_ssize_t itemsize;     /* Size in bytes of one element of this type */
+typedef struct _soa_field_t {
+    char* name;
+    Py_ssize_t name_len;
+    char type_marker;
+    int dtype_num;               /* -1 for strings, -2 for nested struct */
+    Py_ssize_t itemsize;
+
+    /* Sub-array support */
+    Py_ssize_t num_elem;         /* Number of elements (>1 for sub-arrays) */
+
+    /* String encoding support */
+    int str_encoding;            /* SOA_STRING_FIXED/DICT/OFFSET, or -1 if not string */
+    Py_ssize_t str_fixed_len;    /* Fixed string length */
+    PyObject* str_dict;          /* Dictionary list for DICT encoding */
+    Py_ssize_t str_dict_count;   /* Number of dictionary entries */
+    int str_index_size;          /* Index size in bytes */
+
+    /* Nested struct support (when dtype_num == -2) */
+    struct _soa_field_t* nested_fields;  /* Array of nested field descriptors */
+    Py_ssize_t nested_count;             /* Number of nested fields */
 } _soa_field_t;
 
-/* SOA schema structure - represents the complete schema for an SOA container */
+/* SOA schema structure */
 typedef struct {
-    _soa_field_t* fields;    /* Array of field definitions */
-    Py_ssize_t num_fields;   /* Number of fields in the schema */
+    _soa_field_t* fields;
+    Py_ssize_t num_fields;
 } _soa_schema_t;
 
 /******************************************************************************/
