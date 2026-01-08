@@ -27,6 +27,18 @@
 #include "python_funcs.h"
 
 /******************************************************************************/
+/* NumPy 1.x/2.x compatibility macros */
+/******************************************************************************/
+
+#ifndef PyDataType_ELSIZE
+    #define PyDataType_ELSIZE(d) ((d)->elsize)
+#endif
+
+#ifndef PyDataType_TYPE_NUM
+    #define PyDataType_TYPE_NUM(d) ((d)->type_num)
+#endif
+
+/******************************************************************************/
 
 #define RECURSE_AND_RETURN_OR_BAIL(action, recurse_msg) {\
         PyObject *ret;\
@@ -150,9 +162,6 @@ static _soa_schema_t* _decode_soa_schema(_bjdata_decoder_buffer_t* buffer);
 
 /******************************************************************************/
 
-/* Returns new decoder buffer or NULL on failure (an exception will be set). Input must either support buffer interface
- * or be callable. Currently only increases reference count for input parameter.
- */
 _bjdata_decoder_buffer_t* _bjdata_decoder_buffer_create(_bjdata_decoder_prefs_t* prefs, PyObject* input,
         PyObject* seek) {
     _bjdata_decoder_buffer_t* buffer;
@@ -198,26 +207,19 @@ bail:
     return NULL;
 }
 
-// Returns non-zero if buffer cleanup/finalisation failed and no other exception was set already
 int _bjdata_decoder_buffer_free(_bjdata_decoder_buffer_t** buffer) {
     int failed = 0;
 
     if (NULL != buffer && NULL != *buffer) {
         if ((*buffer)->view_set) {
-            // In buffered mode, rewind to position in stream up to which actually read (rather than buffered)
             if (NULL != (*buffer)->seek && (*buffer)->view.len > (*buffer)->pos) {
                 PyObject* type, *value, *traceback, *seek_result;
 
-                // preserve the previous exception, if set
                 PyErr_Fetch(&type, &value, &traceback);
                 seek_result = PyObject_CallFunction((*buffer)->seek, "nn",
                                                     ((*buffer)->pos - (*buffer)->view.len), IO_SEEK_CUR);
                 Py_XDECREF(seek_result);
 
-                /* Blindly calling PyErr_Restore would clear any exception raised by seek call. If however already had
-                 * an error before freeing buffer (this function), propagate that instead. (I.e. this behaves like a
-                 * nested try-except block.
-                 */
                 if (NULL != type) {
                     PyErr_Restore(type, value, traceback);
                 } else if (NULL == seek_result) {
@@ -242,15 +244,6 @@ int _bjdata_decoder_buffer_free(_bjdata_decoder_buffer_t** buffer) {
 
     return failed;
 }
-
-/* Tries to read len bytes from input, returning read chunk. Len is updated to how many bytes were actually read.
- * If not NULL, dst_buffer can be an existing buffer to output len bytes into.
- * Returns NULL if either no input is left (len is set to zero) or an error occurs (len is non-zero). The caller must
- * NOT modify or free the returned chunk unless they specified out_buffer (in which case that is returned). When this
- * function is called again, the previously returned output is no longer valid (unless was created by caller).
- *
- * This function reads from a fixed buffer (single byte array)
- */
 
 static const char* _decoder_buffer_read_fixed(_bjdata_decoder_buffer_t* buffer, Py_ssize_t* len, char* dst_buffer) {
     Py_ssize_t old_pos;

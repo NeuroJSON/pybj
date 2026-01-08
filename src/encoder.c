@@ -28,6 +28,18 @@
 #include "python_funcs.h"
 
 /******************************************************************************/
+/* NumPy 1.x/2.x compatibility macros */
+/******************************************************************************/
+
+#ifndef PyDataType_ELSIZE
+    #define PyDataType_ELSIZE(d) ((d)->elsize)
+#endif
+
+#ifndef PyDataType_TYPE_NUM
+    #define PyDataType_TYPE_NUM(d) ((d)->type_num)
+#endif
+
+/******************************************************************************/
 
 static char bytes_array_prefix[] = {ARRAY_START, CONTAINER_TYPE, TYPE_BYTE, CONTAINER_COUNT};
 
@@ -326,7 +338,7 @@ static inline int _is_string_type(int type_num) {
 
 /* Recursively check if a dtype is supported for SOA encoding */
 static int _is_soa_compatible_dtype(PyArray_Descr* fd) {
-    int type_num = fd->type_num;
+    int type_num = PyDataType_TYPE_NUM(fd);
 
     /* String types are supported */
     if (_is_string_type(type_num)) {
@@ -468,7 +480,7 @@ bail:
 
 /* Write schema for a field recursively (handles nested structs) */
 static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buffer_t* buffer) {
-    int type_num = fd->type_num;
+    int type_num = PyDataType_TYPE_NUM(fd);
     Py_ssize_t i;
 
     /* Handle NPY_VOID: could be sub-array or nested struct */
@@ -488,7 +500,7 @@ static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buff
                 }
             }
 
-            int base_type = base_dtype->type_num;
+            int base_type = PyDataType_TYPE_NUM(base_dtype);
             Py_DECREF(subdtype);
 
             /* Write sub-array schema: [TTT...] */
@@ -576,7 +588,7 @@ static int _write_field_schema_recursive(PyArray_Descr* fd, _bjdata_encoder_buff
     /* String types - write NUMPY BYTE SIZE (not character count) */
     if (_is_string_type(type_num)) {
         WRITE_CHAR_OR_BAIL(TYPE_STRING);
-        BAIL_ON_NONZERO(_encode_longlong(fd->elsize, buffer));
+        BAIL_ON_NONZERO(_encode_longlong(PyDataType_ELSIZE(fd), buffer));
         return 0;
     }
 
@@ -916,9 +928,9 @@ static int _encode_soa(PyArrayObject* arr, _bjdata_encoder_buffer_t* buffer, int
 
         PyArray_Descr* fd = (PyArray_Descr*)PyTuple_GET_ITEM(info, 0);
         field_offset[i] = PyLong_AsSsize_t(PyTuple_GET_ITEM(info, 1));
-        field_itemsize[i] = fd->elsize;
+        field_itemsize[i] = PyDataType_ELSIZE(fd);
 
-        int type_num = fd->type_num;
+        int type_num = PyDataType_TYPE_NUM(fd);
 
         if (type_num == NPY_BOOL) {
             field_type[i] = 1;
