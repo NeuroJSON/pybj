@@ -20,6 +20,7 @@
 #define PY_ARRAY_UNIQUE_SYMBOL bjdata_numpy_array
 #define NPY_NO_DEPRECATED_API 0
 #include <numpy/arrayobject.h>
+#include <numpy/ndarraytypes.h>
 
 #if defined (__cplusplus)
 extern "C" {
@@ -84,6 +85,47 @@ extern "C" {
 #define PyArray_USERDEF NPY_USERDEF
 #endif
 
+#endif
+
+#if NPY_ABI_VERSION < 0x02000000
+/*
+ * NumPy 1.x: Direct struct member access
+ */
+#define DESCR_ELSIZE(d)    (((PyArray_Descr*)(d))->elsize)
+#define DESCR_TYPE_NUM(d)  (((PyArray_Descr*)(d))->type_num)
+#else
+/*
+ * NumPy 2.x: Use Python attribute access to avoid API linkage issues
+ * This is slightly slower but guaranteed to work.
+ */
+static inline npy_intp _descr_elsize_compat(PyArray_Descr* d) {
+    npy_intp result = 0;
+    PyObject* val = PyObject_GetAttrString((PyObject*)d, "itemsize");
+
+    if (val) {
+        result = PyLong_AsSsize_t(val);
+        Py_DECREF(val);
+    }
+
+    PyErr_Clear();
+    return result;
+}
+
+static inline int _descr_type_num_compat(PyArray_Descr* d) {
+    int result = 0;
+    PyObject* val = PyObject_GetAttrString((PyObject*)d, "num");
+
+    if (val) {
+        result = (int)PyLong_AsLong(val);
+        Py_DECREF(val);
+    }
+
+    PyErr_Clear();
+    return result;
+}
+
+#define DESCR_ELSIZE(d)    _descr_elsize_compat((PyArray_Descr*)(d))
+#define DESCR_TYPE_NUM(d)  _descr_type_num_compat((PyArray_Descr*)(d))
 #endif
 
 #if defined (__cplusplus)

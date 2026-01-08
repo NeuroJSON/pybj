@@ -25,7 +25,6 @@
 #include "markers.h"
 #include "decoder.h"
 #include "python_funcs.h"
-#include "numpy_compat.h"
 
 /******************************************************************************/
 
