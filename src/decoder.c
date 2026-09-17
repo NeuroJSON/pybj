@@ -130,6 +130,7 @@ static PyObject* _decode_int16_32(_bjdata_decoder_buffer_t* buffer, Py_ssize_t s
 static PyObject* _decode_uint16_32(_bjdata_decoder_buffer_t* buffer, Py_ssize_t size);
 static PyObject* _decode_int64(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_uint64(_bjdata_decoder_buffer_t* buffer);
+static PyObject* _decode_float16(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_float32(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_float64(_bjdata_decoder_buffer_t* buffer);
 static PyObject* _decode_high_prec(_bjdata_decoder_buffer_t* buffer);
@@ -607,6 +608,23 @@ static long long _decode_int_non_negative(_bjdata_decoder_buffer_t* buffer, char
 bail:
     Py_XDECREF(int_obj);
     return -1;
+}
+
+static PyObject* _decode_float16(_bjdata_decoder_buffer_t* buffer) {
+    const char* raw;
+    double value;
+
+    READ_OR_BAIL(2, raw, "float16");
+    value = _pyfuncs_ubj_PyFloat_Unpack2((const unsigned char*)raw, buffer->prefs.islittle);
+
+    if ((-1.0 == value) && PyErr_Occurred()) {
+        goto bail;
+    }
+
+    return PyFloat_FromDouble(value);
+
+bail:
+    return NULL;
 }
 
 static PyObject* _decode_float32(_bjdata_decoder_buffer_t* buffer) {
@@ -2075,6 +2093,8 @@ PyObject* _bjdata_decode_value(_bjdata_decoder_buffer_t* buffer, char* given_mar
             RETURN_OR_RAISE_DECODER_EXCEPTION(_decode_uint8(buffer), "uint8");
 
         case TYPE_FLOAT16:
+            RETURN_OR_RAISE_DECODER_EXCEPTION(_decode_float16(buffer), "float16");
+
         case TYPE_UINT16:
             RETURN_OR_RAISE_DECODER_EXCEPTION(_decode_uint16_32(buffer, 2), "uint16");
 

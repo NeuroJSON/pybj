@@ -509,7 +509,7 @@ class TestEncodeDecodePlain(TestCase):  # pylint: disable=too-many-public-method
             True,
         )
 
-        self.assertEqual((self.bjdloadb(self.bjddumpb(np.float16(2.2))) == 16486), True)
+        self.assertEqual((self.bjdloadb(self.bjddumpb(np.float16(2.2))) == np.float16(2.2)), True)
         self.assertEqual(
             (self.bjdloadb(self.bjddumpb(np.float32(2.2))) == np.float32(2.2)), True
         )

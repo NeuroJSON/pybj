@@ -53,6 +53,7 @@ extern void _pyfuncs_ubj_detect_formats(void);
  */
 extern int _pyfuncs_ubj_PyFloat_Pack4(double x, unsigned char* p, int le);
 extern int _pyfuncs_ubj_PyFloat_Pack8(double x, unsigned char* p, int le);
+extern double _pyfuncs_ubj_PyFloat_Unpack2(const unsigned char* p, int le);
 extern double _pyfuncs_ubj_PyFloat_Unpack4(const unsigned char* p, int le);
 extern double _pyfuncs_ubj_PyFloat_Unpack8(const unsigned char* p, int le);
 

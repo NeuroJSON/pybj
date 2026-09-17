@@ -319,6 +319,58 @@ Overflow:
 
 /******************************************************************************/
 
+/* Unlike Unpack4 and Unpack8 there is no native-format branch: those fall back to
+   decoding by hand only where the platform's float layout is not IEEE, and there is no
+   corresponding C type whose layout could be in question. A special value is returned
+   rather than raised for the same reason - the error the wider types report only arises
+   on a platform that cannot represent it. */
+double
+_pyfuncs_ubj_PyFloat_Unpack2(const unsigned char* p, int le) {
+    unsigned char sign;
+    int e;
+    unsigned int f;
+    double x;
+    int incr = 1;
+
+    if (le) {
+        p += 1;
+        incr = -1;
+    }
+
+    /* First byte */
+    sign = (*p >> 7) & 1;
+    e = (*p & 0x7C) >> 2;
+    f = (*p & 0x03) << 8;
+    p += incr;
+
+    /* Second byte */
+    f |= *p;
+
+    if (e == 31) {
+        if (f == 0) {
+            return sign ? -Py_HUGE_VAL : Py_HUGE_VAL;
+        }
+        return sign ? -Py_NAN : Py_NAN;
+    }
+
+    x = (double)f / 1024.0;
+
+    if (e == 0) {
+        e = -14;
+    } else {
+        x += 1.0;
+        e -= 15;
+    }
+
+    x = ldexp(x, e);
+
+    if (sign) {
+        x = -x;
+    }
+
+    return x;
+}
+
 double
 _pyfuncs_ubj_PyFloat_Unpack4(const unsigned char* p, int le) {
     if (float_format == unknown_format) {

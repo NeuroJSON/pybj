@@ -130,7 +130,7 @@ __UNPACK_INT64 = [Struct(">q").unpack, Struct("<q").unpack]
 __UNPACK_UINT16 = [Struct(">H").unpack, Struct("<H").unpack]
 __UNPACK_UINT32 = [Struct(">I").unpack, Struct("<I").unpack]
 __UNPACK_UINT64 = [Struct(">Q").unpack, Struct("<Q").unpack]
-__UNPACK_FLOAT16 = [Struct(">h").unpack, Struct("<h").unpack]
+__UNPACK_FLOAT16 = [Struct(">e").unpack, Struct("<e").unpack]
 __UNPACK_FLOAT32 = [Struct(">f").unpack, Struct("<f").unpack]
 __UNPACK_FLOAT64 = [Struct(">d").unpack, Struct("<d").unpack]
 
@@ -144,7 +144,7 @@ __DTYPE_MAP = {
     TYPE_UINT32: "I",
     TYPE_INT64: "q",
     TYPE_UINT64: "Q",
-    TYPE_FLOAT16: "h",
+    TYPE_FLOAT16: "e",
     TYPE_FLOAT32: "f",
     TYPE_FLOAT64: "d",
     TYPE_CHAR: "c",
