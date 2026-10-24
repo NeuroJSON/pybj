@@ -1245,6 +1245,15 @@ static PyObject* _decode_soa_payload(_bjdata_decoder_buffer_t* buffer, _soa_sche
     int has_strings = 0;
     Py_ssize_t** offset_tables = NULL;
     char** string_buffers = NULL;
+    int numpy;
+
+    if ((numpy = _bjdata_numpy_load()) < 0) {
+        goto bail;
+    }
+
+    if (!numpy) {
+        RAISE_DECODER_EXCEPTION("Decoding a structured (SOA) array requires numpy");
+    }
 
     /* Check for string fields */
     for (i = 0; i < schema->num_fields; i++) {
@@ -1677,6 +1686,34 @@ static PyObject* _no_data_type(char type) {
     }
 }
 
+/* Nest a flat list of values into lists of the given dimensions (row-major) */
+static PyObject* _nest_list(PyObject* flat, Py_ssize_t* pos, const long long* dims, unsigned int ndims) {
+    PyObject* list;
+    PyObject* item;
+    long long i;
+
+    if (1 == ndims) {
+        list = PyList_GetSlice(flat, *pos, *pos + (Py_ssize_t)dims[0]);
+        *pos += (Py_ssize_t)dims[0];
+        return list;
+    }
+
+    if (NULL == (list = PyList_New((Py_ssize_t)dims[0]))) {
+        return NULL;
+    }
+
+    for (i = 0; i < dims[0]; i++) {
+        if (NULL == (item = _nest_list(flat, pos, dims + 1, ndims - 1))) {
+            Py_DECREF(list);
+            return NULL;
+        }
+
+        PyList_SET_ITEM(list, (Py_ssize_t)i, item);
+    }
+
+    return list;
+}
+
 static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
     unsigned int ndims = 0;
     long long* dims = NULL;
@@ -1684,6 +1721,7 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
     PyObject* list = NULL;
     PyObject* value = NULL;
     char marker;
+    int numpy = 0;
 
     if (params.invalid) {
         goto bail;
@@ -1708,8 +1746,15 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
             return list;
         }
 
+        /* Packed and ND-arrays become numpy arrays, else lists */
+        if ((ndims && params.type) || (_is_fixed_len_type(params.type) && params.count > 0)) {
+            if ((numpy = _bjdata_numpy_load()) < 0) {
+                goto bail;
+            }
+        }
+
         /* ND-array special case */
-        if (ndims && params.type) {
+        if (numpy && ndims && params.type) {
             int bytelen = 0;
             int pytype = _get_type_info(params.type, &bytelen);
             npy_intp* arraydim = calloc(sizeof(npy_intp), ndims);
@@ -1739,7 +1784,7 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
             value = NULL;
         }
         /* 1D packed array */
-        else if (_is_fixed_len_type(params.type) && params.count > 0) {
+        else if (numpy && _is_fixed_len_type(params.type) && params.count > 0) {
             int bytelen = 0;
             int pytype = _get_type_info(params.type, &bytelen);
             npy_intp arraydim = params.count;
@@ -1770,6 +1815,15 @@ static PyObject* _decode_array(_bjdata_decoder_buffer_t* buffer) {
                     READ_CHAR_OR_BAIL(marker, "array value type marker (sized)");
                 }
             }
+        }
+
+        /* ND-array without numpy: nest the values as lists */
+        if (ndims > 1 && params.type) {
+            Py_ssize_t pos = 0;
+            BAIL_ON_NULL(value = _nest_list(list, &pos, dims, ndims));
+            Py_DECREF(list);
+            list = value;
+            value = NULL;
         }
     } else {
         /* Uncounted array */

@@ -1730,6 +1730,7 @@ bail:
 
 int _bjdata_encode_value(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
     PyObject* newobj = NULL; // result of default call (when encoding unsupported types)
+    int numpy;
 
     if (Py_None == obj) {
         WRITE_CHAR_OR_BAIL(TYPE_NULL);
@@ -1753,10 +1754,12 @@ int _bjdata_encode_value(PyObject* obj, _bjdata_encoder_buffer_t* buffer) {
         BAIL_ON_NONZERO(_encode_PyBytes(obj, buffer));
     } else if (PyByteArray_Check(obj)) {
         BAIL_ON_NONZERO(_encode_PyByteArray(obj, buffer));
-    } else if (PyArray_CheckAnyScalar(obj)) {
+    } else if ((numpy = _bjdata_numpy_in_use()) < 0) {
+        goto bail;
+    } else if (numpy && PyArray_CheckAnyScalar(obj)) {
         RECURSE_AND_BAIL_ON_NONZERO(_encode_NDarray(obj, buffer), " while encoding a Numpy scalar");
     } else if (PySequence_Check(obj)) {
-        if (PyArray_CheckExact(obj)) {
+        if (numpy && PyArray_CheckExact(obj)) {
             RECURSE_AND_BAIL_ON_NONZERO(_encode_NDarray(obj, buffer), " while encoding a Numpy ndarray");
         } else {
             RECURSE_AND_BAIL_ON_NONZERO(_encode_PySequence(obj, buffer), " while encoding an array");

@@ -128,6 +128,17 @@ static inline int _descr_type_num_compat(PyArray_Descr* d) {
 #define DESCR_TYPE_NUM(d)  _descr_type_num_compat((PyArray_Descr*)(d))
 #endif
 
+/*
+ * NumPy is optional: its C API is loaded the first time an array needs it.
+ * _bjdata_numpy_load() imports numpy if it is installed, returning 1 once the
+ * API is ready, 0 when numpy is not installed, or -1 with an exception set
+ * when it is installed but fails to load. _bjdata_numpy_in_use() does the
+ * same only once numpy has been imported elsewhere: until then no object can
+ * be a numpy one.
+ */
+extern int _bjdata_numpy_load(void);
+extern int _bjdata_numpy_in_use(void);
+
 #if defined (__cplusplus)
 }
 #endif

@@ -96,8 +96,10 @@ setup(
     url="https://github.com/NeuroJSON/pybj",
     license="Apache License 2.0",
     packages=["bjdata"],
-    install_requires=["numpy>=1.8.0"],
-    extras_require={"dev": ["Pympler>=0.7 ,<0.8", "coverage>=4.5.3,<4.6"]},
+    extras_require={
+        "numpy": ["numpy>=1.25"],
+        "dev": ["Pympler>=0.7 ,<0.8", "coverage>=4.5.3,<4.6"],
+    },
     zip_safe=False,
     ext_modules=(
         [

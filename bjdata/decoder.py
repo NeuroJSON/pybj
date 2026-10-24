@@ -50,14 +50,20 @@ from .markers import (
     CONTAINER_TYPE,
     CONTAINER_COUNT,
 )
-from numpy import (
-    array as ndarray,
-    dtype as npdtype,
-    frombuffer as buffer2numpy,
-    half as halfprec,
-    zeros as npzeros,
-    empty as npempty,
-)
+# numpy is optional: without it, packed and ND-arrays decode to (nested) lists
+try:
+    from numpy import (
+        array as ndarray,
+        dtype as npdtype,
+        frombuffer as buffer2numpy,
+        half as halfprec,
+        zeros as npzeros,
+        empty as npempty,
+    )
+
+    HAS_NUMPY = True
+except ImportError:  # pragma: no cover
+    HAS_NUMPY = False
 from array import array as typedarray
 
 __TYPES = frozenset(
@@ -582,6 +588,8 @@ def __schema_to_dtype(schema):
 
 def __decode_soa(fp_read, schema, is_row_major, intern_object_keys, le):
     """Decode SOA payload into numpy structured array."""
+    if not HAS_NUMPY:
+        raise DecoderException("Decoding a structured (SOA) array requires numpy")
     if fp_read(1) != CONTAINER_COUNT:
         raise DecoderException("Expected # after SOA schema")
     marker = fp_read(1)
@@ -995,7 +1003,7 @@ def __decode_array(
             raise DecoderException("Container bytes array too short")
         return container
 
-    if type_ in __TYPES_FIXLEN and count > 0:
+    if HAS_NUMPY and type_ in __TYPES_FIXLEN and count > 0:
         if hasattr(count, "dtype"):
             container = fp_read(count.item() * __DTYPELEN_MAP[type_])
         else:
@@ -1063,7 +1071,8 @@ def __decode_array(
                 (iter(container),) + tuple(dims[:0:-1]),
             )
         )
-        container = ndarray(container, dtype=npdtype(__DTYPE_MAP[type_]))
+        if HAS_NUMPY:
+            container = ndarray(container, dtype=npdtype(__DTYPE_MAP[type_]))
 
     return container
 

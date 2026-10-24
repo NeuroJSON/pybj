@@ -32,6 +32,10 @@ pip3 install bjdata --user
 ## To get from PyPI via python
 python3 -mpip install bjdata
 
+## With numpy, to decode packed and ND-arrays as numpy arrays (else lists) and
+## to encode and decode numpy data, including structured (SOA) arrays
+python3 -mpip install bjdata[numpy]
+
 ## To only build extension modules in-place (e.g. in repository)
 python3 setup.py build_ext -i
 

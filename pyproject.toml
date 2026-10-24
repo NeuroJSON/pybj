@@ -1,3 +1,5 @@
 [build-system]
-requires = ["setuptools>=40", "wheel", "oldest-supported-numpy"]
+# Built against NumPy 2 headers, the extension also runs with NumPy 1.25+, or without
+# numpy at all (it is an optional runtime dependency: bjdata[numpy])
+requires = ["setuptools>=40", "wheel", "numpy>=2.0"]
 build-backend = "setuptools.build_meta"

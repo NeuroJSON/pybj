@@ -42,6 +42,52 @@ static _bjdata_decoder_prefs_t _bjdata_decoder_prefs_defaults = { NULL, NULL, 0,
 
 /******************************************************************************/
 
+/* -1: not tried yet, 0: numpy is not installed, 1: its C API is loaded */
+static int _bjdata_numpy_state = -1;
+
+int _bjdata_numpy_load(void) {
+    PyObject* numpy;
+
+    if (_bjdata_numpy_state >= 0) {
+        return _bjdata_numpy_state;
+    }
+
+    numpy = PyImport_ImportModule("numpy");
+
+    if (NULL == numpy) {
+        if (!PyErr_ExceptionMatches(PyExc_ImportError)) {
+            return -1;
+        }
+
+        PyErr_Clear();
+        _bjdata_numpy_state = 0;
+        return 0;
+    }
+
+    Py_DECREF(numpy);
+
+    if (_import_array() < 0) {
+        return -1;
+    }
+
+    _bjdata_numpy_state = 1;
+    return 1;
+}
+
+int _bjdata_numpy_in_use(void) {
+    if (_bjdata_numpy_state >= 0) {
+        return _bjdata_numpy_state;
+    }
+
+    if (NULL == PyDict_GetItemString(PyImport_GetModuleDict(), "numpy")) {
+        return 0;
+    }
+
+    return _bjdata_numpy_load();
+}
+
+/******************************************************************************/
+
 /* Parse soa_format string parameter and convert to enum */
 static int _parse_soa_format(const char* soa_str) {
     if (soa_str == NULL) {
@@ -300,7 +346,6 @@ init_bjdata(void)
     PyObject* module = Py_InitModule("_bjdata", UbjsonMethods);
 #endif
 
-    import_array();
     BAIL_ON_NONZERO(_bjdata_encoder_init());
     BAIL_ON_NONZERO(_bjdata_decoder_init());
 
